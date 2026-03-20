@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sourceress</title>
+    <link rel="stylesheet" href="fonts_embed.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="/main.js" defer></script>
+  </head>
+  <body>
+    <main class="container">
+      <header class="top" id="topbar">
+        <div class="brand">
+          <img src="/assets/logo.png" alt="Sourceress" />
+          <h1 class="title">Sourceress</h1>
+        </div>
+        <div class="actions">
+          <button id="btnBack" type="button" title="Back">←</button>
+          <button id="btnForward" type="button" title="Forward">→</button>
+          <button id="btnReload" type="button" title="Reload">⟳</button>
+          <button id="btnCopyUrl" type="button" title="Copy current tab URL">⧉</button>
+          <span style="width:10px; display:inline-block;"></span>
+          <button id="btnStart" type="button">Start</button>
+          <button id="btnStop" type="button">Stop</button>
+          <button id="btnSettings" type="button">Settings</button>
+        </div>
+      </header>
+
+      <section id="panelStatus" class="panel">
+        <div><strong>Status:</strong> <span id="statusText">…</span></div>
+        <div class="hint" id="statusHint"></div>
+      </section>
+
+      <section id="panelSettings" class="panel" style="display:none;">
+        <h2>Setup</h2>
+        <p class="hint">Paste your GitHub token. It’s stored securely (Credential Manager / Keychain).</p>
+        <div class="row">
+          <input id="tokenInput" type="password" placeholder="ghp_…" />
+          <button id="btnSaveToken" type="button">Save</button>
+          <button id="btnClearToken" type="button">Clear</button>
+        </div>
+      </section>
+
+      <section class="panel" id="panelTabs" style="display:none; padding: 10px;">
+        <div id="tabbar" class="tabbar"></div>
+      </section>
+
+      <section class="panel" id="panelApp" style="display:none; padding: 10px;">
+        <div id="tabViews"></div>
+      </section>
+    </main>
+  </body>
+</html>

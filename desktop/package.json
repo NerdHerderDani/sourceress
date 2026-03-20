@@ -1,0 +1,14 @@
+{
+  "name": "tauri-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "cmd /c \"set PATH=%USERPROFILE%\\.cargo\\bin;%PATH% && tauri dev\"",
+    "build": "cmd /c \"set PATH=%USERPROFILE%\\.cargo\\bin;%PATH% && tauri build\""
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

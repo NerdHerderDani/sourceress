@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div style="display:flex; gap:12px; align-items:center;">
+      <img src="/static/logo.png" alt="Sourceress" style="width:44px; height:44px; border-radius:12px; border:1px solid var(--border);" />
+      <div>
+        <button type="button" class="tipsToggle" id="tipsToggle">ⓘ Tips</button>
+        <div class="tipsBox hidden" id="tipsBox">
+          <div class="info">Boolean-ish query (MVP): AND / OR / NOT + quotes. Example: <code>grpc AND kubernetes NOT blockchain</code></div>
+        </div>
+      </div>
+    </div>
+    <span class="pill">prefers-color-scheme aware</span>
+  </div>
+
+  <div class="panel">
+    <div style="display:flex; gap:16px; align-items:flex-start;">
+      <div style="flex: 2;">
+        <form method="post" action="/search" id="searchForm">
+          <label>Query builder</label>
+          <div class="panel" style="padding:12px; margin: 8px 0 14px; background: color-mix(in srgb, var(--panel2) 85%, transparent);">
+            <div class="row">
+              <div>
+                <label>Must have (required)</label>
+                <div class="chips" id="qbMustChips"></div>
+              </div>
+              <div>
+                <label>Nice to have (boost)</label>
+                <div class="chips" id="qbNiceChips"></div>
+              </div>
+              <div>
+                <label>Must NOT have (exclude)</label>
+                <div class="chips" id="qbNotChips"></div>
+              </div>
+            </div>
+            <input type="hidden" id="qbMust" />
+            <input type="hidden" id="qbNice" />
+            <input type="hidden" id="qbNot" />
+            <div class="tipsBox" id="qbTipsBox">
+              <div class="info">Compiles into the Query box below. Nice-to-have only affects ranking (boost), not filtering.
+                <div style="margin-top:6px;"><span class="pill">compiled</span> <code id="qbPreview"></code></div>
+              </div>
+            </div>
+          </div>
+
+          <label>Query (advanced / editable)</label>
+          <textarea name="query" id="queryText" rows="3" required>{{ defaults.query }}</textarea>
+
+          <label>Seed repos (comma-separated owner/repo or GitHub URLs)</label>
+          <input name="repo_seeds" placeholder="golang/go, ethereum/go-ethereum, paradigmxyz/reth" />
+          <div class="info" style="margin-top:8px;">If set, we’ll rank contributors from these repos (plus normal discovery).</div>
+
+          <div class="row">
+            <div>
+              <label>Location (optional)</label>
+              <input name="location" value="{{ defaults.location }}" placeholder="San Francisco"/>
+            </div>
+            <div>
+              <label>Min followers</label>
+              <input name="min_followers" type="number" min="0" value="{{ defaults.min_followers }}"/>
+            </div>
+            <div>
+              <label>Active days</label>
+              <input name="active_days" type="number" min="30" max="3650" value="{{ defaults.active_days }}"/>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label>Min contributions (in window)</label>
+              <input name="min_contribs" type="number" min="0" value="0" />
+            </div>
+            <div>
+              <label>Max contributions (in window)</label>
+              <input name="max_contribs" type="number" min="0" value="0" />
+            </div>
+            <div class="info" style="align-self:flex-end; padding: 8px 10px;">0 = no filter</div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label>Location include (comma)</label>
+              <input name="location_include" placeholder="e.g. bay area, nyc" />
+            </div>
+            <div>
+              <label>Location exclude (comma)</label>
+              <input name="location_exclude" placeholder="e.g. india, russia" />
+            </div>
+            <div></div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label>Company include (comma)</label>
+              <input name="company_include" placeholder="e.g. coinbase, stripe" />
+            </div>
+            <div>
+              <label>Company exclude (comma)</label>
+              <input name="company_exclude" placeholder="e.g. agency, recruiter" />
+            </div>
+            <div></div>
+          </div>
+
+          <div style="margin-top: 10px; display:flex; justify-content: space-between; align-items:center; gap: 12px;">
+            <button type="submit">Search</button>
+            <div class="hint">Tip: your OS/browser theme controls dark/light mode.</div>
+          </div>
+        </form>
+      </div>
+
+      <div style="flex: 1;">
+        <div style="display:flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+          <h2 style="margin:0; font-size: 18px;">Saved searches</h2>
+          <button type="button" id="btnSaveSearch">Save current</button>
+        </div>
+        <div class="info" style="margin: 8px 0;">Global per install. Click to run.</div>
+        <div id="savedList" class="panel" style="padding:10px;"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  async function loadSaved() {
+    const res = await fetch('/saved-searches', {cache:'no-store'});
+    const data = await res.json();
+    const el = document.getElementById('savedList');
+    const items = data.items || [];
+    if (!items.length) {
+      el.innerHTML = '<div class="hint">No saved searches yet.</div>';
+      return;
+    }
+    el.innerHTML = items.map(i => {
+      const name = (i.name || '').replaceAll('<','&lt;');
+      return `<div style="display:flex; justify-content: space-between; gap: 8px; align-items:center; padding: 6px 4px; border-bottom: 1px solid var(--border);">
+        <button type="button" data-run="${i.id}" style="flex:1; text-align:left; background:transparent; border:1px solid transparent; padding:6px 8px;">${name}</button>
+        <button type="button" data-del="${i.id}" title="Delete" style="padding:6px 8px;">✕</button>
+      </div>`;
+    }).join('');
+
+    el.querySelectorAll('button[data-run]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.getAttribute('data-run');
+        const r = await fetch(`/saved-searches/${id}/run`, {method:'POST'});
+        const out = await r.json();
+        if (out.run_id) window.location.href = `/runs/${out.run_id}`;
+      });
+    });
+
+    el.querySelectorAll('button[data-del]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.getAttribute('data-del');
+        await fetch(`/saved-searches/${id}`, {method:'DELETE'});
+        loadSaved();
+      });
+    });
+  }
+
+  function parseList(s) {
+    return (s || '').split(',').map(x => x.trim()).filter(Boolean);
+  }
+
+  function makeChips(containerId, hiddenId, placeholder) {
+    const container = document.getElementById(containerId);
+    const hidden = document.getElementById(hiddenId);
+    if (!container || !hidden) return { get: () => [], set: () => {} };
+
+    const input = document.createElement('input');
+    input.className = 'chipInput';
+    input.placeholder = placeholder;
+
+    let items = [];
+
+    function syncHidden() {
+      hidden.value = items.join(',');
+    }
+
+    function render() {
+      container.innerHTML = '';
+      items.forEach((t) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.innerHTML = `<span>${t.replaceAll('<','&lt;')}</span>`;
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.textContent = '✕';
+        x.title = 'Remove';
+        x.addEventListener('click', () => {
+          items = items.filter(v => v !== t);
+          syncHidden();
+          render();
+          compileQuery();
+        });
+        chip.appendChild(x);
+        container.appendChild(chip);
+      });
+      container.appendChild(input);
+    }
+
+    function addFromInput() {
+      const raw = input.value.trim();
+      if (!raw) return;
+      raw.split(',').map(x => x.trim()).filter(Boolean).forEach(v => {
+        if (!items.includes(v)) items.push(v);
+      });
+      input.value = '';
+      syncHidden();
+      render();
+      compileQuery();
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        addFromInput();
+      }
+      if (e.key === 'Backspace' && !input.value && items.length) {
+        items.pop();
+        syncHidden();
+        render();
+        compileQuery();
+      }
+    });
+
+    container.addEventListener('click', () => input.focus());
+
+    // init
+    syncHidden();
+    render();
+
+    return {
+      get: () => items.slice(),
+      set: (arr) => {
+        items = (arr || []).map(x => String(x).trim()).filter(Boolean);
+        syncHidden();
+        render();
+      }
+    };
+  }
+
+  function quote(t) {
+    if (t.includes('"')) t = t.replaceAll('"', '');
+    return t.includes(' ') ? `"${t}"` : t;
+  }
+
+  const chipsMust = makeChips('qbMustChips', 'qbMust', 'e.g. grpc, kubernetes');
+  const chipsNice = makeChips('qbNiceChips', 'qbNice', 'e.g. prometheus, envoy');
+  const chipsNot = makeChips('qbNotChips', 'qbNot', 'e.g. blockchain, nft');
+
+  function compileQuery() {
+    const must = chipsMust.get();
+    const nice = chipsNice.get();
+    const nots = chipsNot.get();
+
+    const parts = [];
+    if (must.length) parts.push(must.map(quote).join(' AND '));
+    // We put nice-to-have terms into OR so the parser captures them as SHOULD.
+    // GitHub tokens ignore SHOULD, but scoring uses them.
+    if (nice.length) parts.push(nice.map(quote).join(' OR '));
+    if (nots.length) parts.push(nots.map(t => `NOT ${quote(t)}`).join(' '));
+
+    const q = parts.join(' ').trim();
+    const preview = document.getElementById('qbPreview');
+    if (preview) preview.textContent = q;
+
+    const qt = document.getElementById('queryText');
+    if (qt && q) qt.value = q;
+  }
+
+  // tips toggle (persist per-browser)
+  const tipsBox = document.getElementById('tipsBox');
+  const tipsToggle = document.getElementById('tipsToggle');
+  const show = localStorage.getItem('tips_show') === '1';
+  if (tipsBox) tipsBox.classList.toggle('hidden', !show);
+  tipsToggle?.addEventListener('click', () => {
+    const now = tipsBox?.classList.contains('hidden');
+    tipsBox?.classList.toggle('hidden', !now);
+    localStorage.setItem('tips_show', now ? '1' : '0');
+  });
+
+  // initial preview
+  compileQuery();
+
+  document.getElementById('btnSaveSearch').addEventListener('click', async () => {
+    const form = document.getElementById('searchForm');
+    const fd = new FormData(form);
+    const name = prompt('Name this saved search:');
+    if (!name) return;
+    const body = new FormData();
+    body.append('name', name);
+    body.append('query', fd.get('query') || '');
+    body.append('repo_seeds', fd.get('repo_seeds') || '');
+    body.append('location', fd.get('location') || '');
+    body.append('min_followers', fd.get('min_followers') || '0');
+    body.append('active_days', fd.get('active_days') || '180');
+    body.append('min_contribs', fd.get('min_contribs') || '0');
+    body.append('max_contribs', fd.get('max_contribs') || '0');
+    body.append('location_include', fd.get('location_include') || '');
+    body.append('location_exclude', fd.get('location_exclude') || '');
+    body.append('company_include', fd.get('company_include') || '');
+    body.append('company_exclude', fd.get('company_exclude') || '');
+    await fetch('/saved-searches', {method:'POST', body});
+    loadSaved();
+  });
+
+  loadSaved();
+</script>
+{% endblock %}

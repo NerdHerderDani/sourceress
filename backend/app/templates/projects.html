@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0; font-family: 'Flynn', system-ui, sans-serif; font-weight: 700;">Projects</h1>
+      <div class="hint">Saved profiles grouped by project (global per install).</div>
+    </div>
+    <div>
+      <a href="/">New search</a>
+    </div>
+  </div>
+
+  <div class="panel" style="display:flex; gap: 16px;">
+    <div style="flex:1; min-width: 260px;">
+      <div style="display:flex; gap: 8px; align-items:center;">
+        <input id="newProjectName" placeholder="New project name" />
+        <button id="btnCreate">Create</button>
+      </div>
+
+      <div style="display:flex; justify-content: space-between; align-items:center; gap: 8px; margin-top: 10px;">
+        <div class="hint">Sort</div>
+        <select id="sortProjects" style="width:auto; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+          <option value="updated">Last updated</option>
+          <option value="name">Name (A–Z)</option>
+          <option value="created">Created (newest)</option>
+        </select>
+      </div>
+
+      <div id="projectList" style="margin-top: 12px;"></div>
+    </div>
+
+    <div style="flex:2;">
+      <div id="projectDetail" class="panel" style="background: color-mix(in srgb, var(--panel2) 85%, transparent);"></div>
+    </div>
+  </div>
+
+<script>
+  function esc(s){ return (s ?? '').toString().replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+  let selectedId = null;
+  let projectSort = localStorage.getItem('project_sort') || 'updated';
+
+  function selectFromHash(){
+    try {
+      const h = (window.location.hash || '').replace('#','').trim();
+      // Only apply hash selection if caller hasn't already chosen something.
+      if (h && (selectedId == null || String(selectedId).trim() === '')) selectedId = h;
+    } catch (_) {}
+  }
+
+  async function loadProjects(){
+    selectFromHash();
+    const res = await fetch(`/projects?sort=${encodeURIComponent(projectSort)}`, {cache:'no-store'});
+    if (!res.ok) {
+      const t = await res.text();
+      document.getElementById('projectList').innerHTML = `<div class="danger">Failed to load projects (${res.status}).\n${esc(t).slice(0,300)}</div>`;
+      return;
+    }
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (e) {
+      const t = await res.text();
+      document.getElementById('projectList').innerHTML = `<div class="danger">Projects API returned non-JSON.\n${esc(t).slice(0,300)}</div>`;
+      return;
+    }
+    const items = data.items || [];
+    const el = document.getElementById('projectList');
+    if (!items.length){
+      el.innerHTML = '<div class="hint">No projects yet.</div>';
+      document.getElementById('projectDetail').innerHTML = '<div class="hint">Create a project, then add candidates from a run.</div>';
+      return;
+    }
+
+    el.innerHTML = items.map(p => `
+      <div style="display:flex; justify-content: space-between; gap: 8px; align-items:center; padding: 6px 4px; border-bottom: 1px solid var(--border);">
+        <button type="button" data-id="${p.id}" style="flex:1; text-align:left; background:transparent; border:1px solid transparent; padding:6px 8px;">${esc(p.name)}</button>
+        <button type="button" data-ren="${p.id}" title="Rename" style="padding:6px 8px;">✎</button>
+        <button type="button" data-del="${p.id}" title="Delete" style="padding:6px 8px;">🗑</button>
+      </div>
+    `).join('');
+
+    el.querySelectorAll('button[data-id]').forEach(b => {
+      b.addEventListener('click', async () => {
+        selectedId = b.getAttribute('data-id');
+        try { window.location.hash = String(selectedId); } catch (_) {}
+        await loadProjectDetail(selectedId);
+      });
+    });
+
+    el.querySelectorAll('button[data-ren]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-ren');
+        const p = items.find(x => String(x.id) === String(id));
+        const nm = prompt('Rename project:', p?.name || '');
+        if (!nm) return;
+        const fd = new FormData();
+        fd.append('name', nm);
+        const res = await fetch(`/projects/${id}/edit`, {method:'POST', body: fd});
+        if (!res.ok) {
+          alert('Rename failed: ' + (await res.text()).slice(0,300));
+          return;
+        }
+        selectedId = id;
+        try { window.location.hash = String(selectedId); } catch (_) {}
+        await loadProjects();
+      });
+    });
+
+    el.querySelectorAll('button[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-del');
+        const p = items.find(x => String(x.id) === String(id));
+        if (!confirm(`Delete project "${p?.name || id}"? This removes all saved profiles in it.`)) return;
+        const res = await fetch(`/projects/${id}/delete`, {method:'POST'});
+        if (!res.ok) {
+          alert('Delete failed: ' + (await res.text()).slice(0,300));
+          return;
+        }
+        if (String(selectedId) === String(id)) selectedId = null;
+        await loadProjects();
+      });
+    });
+
+    if (!selectedId) {
+      selectedId = items[0].id;
+      await loadProjectDetail(selectedId);
+    }
+  }
+
+  async function loadProjectDetail(id){
+    const res = await fetch(`/projects/${id}`, {cache:'no-store'});
+    const data = await res.json();
+    const el = document.getElementById('projectDetail');
+    if (!data.ok){
+      el.innerHTML = `<div class="danger">${esc(data.error || 'error')}</div>`;
+      return;
+    }
+
+    const p = data.project;
+    const items = data.items || [];
+
+    function renderCard(c){
+      const status = (c.status || 'new').toLowerCase();
+      const statusPill = status === 'contacted' ? 'Contacted' : status === 'pass' ? 'Pass' : 'New';
+      return `
+        <div class="card" style="margin: 10px 0;">
+          <div><img class="avatar" src="${esc(c.avatar)}"/></div>
+          <div style="flex:1">
+            <div style="display:flex; justify-content: space-between; gap: 12px; align-items: baseline;">
+              <div>
+                <a class="extLink" data-url="${esc(c.url)}" href="/out?url=${encodeURIComponent(c.url)}">${esc(c.login)}</a>
+                ${c.name ? ` — ${esc(c.name)}` : ''}
+                <span class="pill" style="margin-left:8px;">${esc(statusPill)}</span>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <select data-status="${esc(c.login)}" style="padding:8px 10px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+                  <option value="new" ${status==='new'?'selected':''}>New</option>
+                  <option value="contacted" ${status==='contacted'?'selected':''}>Contacted</option>
+                  <option value="pass" ${status==='pass'?'selected':''}>Pass</option>
+                </select>
+                <button type="button" data-remove="${esc(c.login)}">Remove</button>
+              </div>
+            </div>
+            ${c.note ? `<div class="meta" style="margin-top:6px;">${esc(c.note)}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    const groups = {
+      new: items.filter(x => (x.status || 'new') === 'new'),
+      contacted: items.filter(x => (x.status || 'new') === 'contacted'),
+      pass: items.filter(x => (x.status || 'new') === 'pass'),
+    };
+
+    el.innerHTML = `
+      <div style="display:flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+        <h2 style="margin:0">${esc(p.name)}</h2>
+        <span class="pill">${items.length} profiles</span>
+      </div>
+      <div class="hint" style="margin: 6px 0 10px;">Pipeline: move people between New / Contacted / Pass. Remove deletes them from the project.</div>
+
+      <div class="row" style="gap: 12px; align-items:flex-start;">
+        <div class="panel" style="flex:1; padding:10px;">
+          <div style="display:flex; justify-content: space-between; align-items:baseline;">
+            <strong>New</strong>
+            <span class="pill">${groups.new.length}</span>
+          </div>
+          ${groups.new.map(renderCard).join('') || '<div class="hint" style="margin-top:8px;">Empty</div>'}
+        </div>
+        <div class="panel" style="flex:1; padding:10px;">
+          <div style="display:flex; justify-content: space-between; align-items:baseline;">
+            <strong>Contacted</strong>
+            <span class="pill">${groups.contacted.length}</span>
+          </div>
+          ${groups.contacted.map(renderCard).join('') || '<div class="hint" style="margin-top:8px;">Empty</div>'}
+        </div>
+        <div class="panel" style="flex:1; padding:10px;">
+          <div style="display:flex; justify-content: space-between; align-items:baseline;">
+            <strong>Pass</strong>
+            <span class="pill">${groups.pass.length}</span>
+          </div>
+          ${groups.pass.map(renderCard).join('') || '<div class="hint" style="margin-top:8px;">Empty</div>'}
+        </div>
+      </div>
+    `;
+
+    el.querySelectorAll('button[data-remove]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const login = btn.getAttribute('data-remove');
+        const fd = new FormData();
+        fd.append('login', login);
+        await fetch(`/projects/${id}/remove`, {method:'POST', body: fd});
+        await loadProjectDetail(id);
+      });
+    });
+
+    el.querySelectorAll('select[data-status]').forEach(sel => {
+      sel.addEventListener('change', async () => {
+        const login = sel.getAttribute('data-status');
+        const fd = new FormData();
+        fd.append('login', login);
+        fd.append('status', sel.value);
+        await fetch(`/projects/${id}/status`, {method:'POST', body: fd});
+        await loadProjectDetail(id);
+      });
+    });
+
+    // Native open when in Tauri
+    document.querySelectorAll('a.extLink').forEach(a => {
+      a.addEventListener('click', async (e) => {
+        const url = a.getAttribute('data-url');
+        const tauriInvoke = window.__TAURI__?.core?.invoke;
+        if (typeof tauriInvoke === 'function' && url){
+          e.preventDefault();
+          try { await tauriInvoke('open_url', { url }); } catch (_) {}
+        }
+      });
+    });
+  }
+
+  document.getElementById('btnCreate').addEventListener('click', async () => {
+    const name = document.getElementById('newProjectName').value.trim();
+    if (!name) return;
+    const fd = new FormData();
+    fd.append('name', name);
+
+    try {
+      const res = await fetch('/projects', {method:'POST', body: fd});
+      if (!res.ok) {
+        const t = await res.text();
+        alert(`Create failed (${res.status}).\n` + t.slice(0, 300));
+        return;
+      }
+      let out = null;
+      try {
+        out = await res.json();
+      } catch (_) {
+        const t = await res.text();
+        alert('Create returned non-JSON:\n' + t.slice(0, 300));
+        return;
+      }
+      if (!out?.ok) {
+        alert('Create failed: ' + (out?.error || 'unknown'));
+        return;
+      }
+
+      document.getElementById('newProjectName').value = '';
+      // select newly created project
+      selectedId = out.item.id;
+      // also update hash so deep-links are consistent
+      try { window.location.hash = String(out.item.id); } catch (_) {}
+      await loadProjects();
+    } catch (e) {
+      alert('Create failed: ' + String(e));
+    }
+  });
+
+  document.getElementById('sortProjects')?.addEventListener('change', async (e) => {
+    projectSort = e.target.value;
+    try { localStorage.setItem('project_sort', projectSort); } catch (_) {}
+    await loadProjects();
+  });
+
+  // init sort dropdown
+  const sortEl = document.getElementById('sortProjects');
+  if (sortEl) sortEl.value = projectSort;
+
+  window.addEventListener('hashchange', () => loadProjects());
+  loadProjects();
+</script>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="panel">
+    <h2 style="margin-top:0">Settings</h2>
+
+    <h3>GitHub token</h3>
+    <p class="hint">
+      Save a personal access token (classic or fine-grained) to run searches. This is encrypted at rest using <code>APP_SECRET_KEY</code>.
+    </p>
+
+    <form method="post" action="/settings/github-token">
+      <label class="hint">Token</label>
+      <input name="token" type="password" placeholder="ghp_…" autocomplete="off" />
+      <div style="margin-top: 10px; display:flex; gap:10px; align-items:center; flex-wrap: wrap;">
+        <button type="submit">Save token</button>
+        <span class="hint">{% if has_token %}Token is saved for this account.{% else %}No token saved for this account.{% endif %}</span>
+      </div>
+    </form>
+
+    <hr style="border:0; border-top:1px solid var(--border); margin: 18px 0;"/>
+
+    <h3>Auth status</h3>
+    <div class="info">
+      <div><strong>Email:</strong> {{ request.state.user_email or "" }}</div>
+      <div><strong>Allowlist enabled:</strong> {{ allowlist_enabled }}</div>
+      <div><strong>Supabase JWT verification enabled:</strong> {{ jwt_enabled }}</div>
+    </div>
+
+  </div>
+{% endblock %}

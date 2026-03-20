@@ -1,0 +1,13 @@
+# Node
+node_modules/
+
+# Tauri
+src-tauri/target/
+src-tauri/bin/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0" id="runTitle">Loading…</h1>
+      <div id="status" class="hint">Loading…</div>
+      <div id="error" class="danger" style="white-space: pre-wrap;"></div>
+    </div>
+    <div>
+      <a href="/stack">New stack search</a>
+      &nbsp;|&nbsp;
+      <a href="/">GitHub</a>
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+<script>
+  const runId = {{ run_id }};
+  function esc(s){ return (s ?? '').toString().replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+  function daysSince(ts){
+    if (!ts) return null;
+    const now = Date.now()/1000;
+    return Math.round((now - ts)/86400);
+  }
+
+  function renderCandidate(c){
+    const detailsId = `d_${c.login}`;
+    const reasons = (c.reasons || []).map(r => `<li>${esc(r)}</li>`).join('');
+    const tags = (c.tags || []).map(t => `<span class=\"pill\" style=\"margin-right:6px;\">${esc(t)}</span>`).join('');
+    const last = daysSince(c.last_seen);
+
+    return `
+      <div class="card">
+        <div><img class="avatar" src="${esc(c.avatar)}"/></div>
+        <div style="flex:1">
+          <div style="display:flex; justify-content: space-between; gap: 12px; align-items: baseline;">
+            <div>
+              <a class="extLink" data-url="${esc(c.url)}" href="/out?url=${encodeURIComponent(c.url)}">${esc(c.name || c.login)}</a>
+              <span class="pill" style="margin-left:8px;">${esc(c.login)}</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <button class="btnToggle" data-target="${detailsId}" type="button" title="Why / scoring details">Why ▸</button>
+            </div>
+          </div>
+
+          <div class="meta">${esc(c.location || '')}</div>
+          <div class="meta">Score: ${Number(c.score).toFixed(2)} · Rep: ${esc(c.rep ?? 0)} · Answers(sample): ${esc(c.answers ?? 0)} · Last seen: ${last == null ? 'n/a' : (last + 'd')}</div>
+          <div style="margin-top:6px;">${tags}</div>
+
+          <div class="cardActions">
+            <select class="projSel" data-login="${esc(c.login)}" style="flex:1; min-width: 220px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);"></select>
+            <select class="statusSel" data-login="${esc(c.login)}" style="width:auto; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+              <option value="new">New</option>
+              <option value="contacted">Contacted</option>
+              <option value="pass">Pass</option>
+            </select>
+            <input class="projNote" data-login="${esc(c.login)}" placeholder="Note (saved on add)" style="flex:2; min-width: 220px;" value="" />
+            <button class="btnAddProj smallBtn" data-login="${esc(c.login)}" type="button">Add</button>
+            <button class="btnCopy smallBtn" data-copy="${esc(c.url)}" type="button">Copy</button>
+          </div>
+
+          <div id="${detailsId}" class="details collapsed">
+            <ul>${reasons}</ul>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  let _projects = null;
+
+  async function ensureProjectsLoaded(){
+    if (_projects) return _projects;
+    try {
+      const res = await fetch('/projects', {cache:'no-store'});
+      const data = await res.json();
+      _projects = (data.items || []).map(p => ({ id: p.id, name: p.name }));
+    } catch (_) {
+      _projects = [];
+    }
+    return _projects;
+  }
+
+  function populateProjectSelects(){
+    const selects = document.querySelectorAll('select.projSel');
+    const lastPid = localStorage.getItem('last_project_id') || '';
+    selects.forEach(sel => {
+      if (sel.__filled) return;
+      sel.__filled = true;
+      sel.innerHTML = '';
+      const opt0 = document.createElement('option');
+      opt0.value = '';
+      opt0.textContent = _projects?.length ? 'Choose project…' : 'No projects yet';
+      sel.appendChild(opt0);
+      (_projects || []).forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = String(p.id);
+        opt.textContent = p.name;
+        sel.appendChild(opt);
+      });
+      if (lastPid) sel.value = lastPid;
+      sel.addEventListener('change', () => {
+        if (sel.value) localStorage.setItem('last_project_id', sel.value);
+      });
+    });
+  }
+
+  async function poll(){
+    const res = await fetch(`/runs/${runId}.json`, {cache:'no-store'});
+    const data = await res.json();
+
+    const st = data.status || {};
+    const q = (st.raw_query || '').trim();
+    document.getElementById('runTitle').textContent = q ? q : `Stack run ${runId}`;
+    document.getElementById('status').textContent = `${st.status || 'unknown'} — ${st.processed ?? 0}/${st.total ?? 0}`;
+    document.getElementById('error').textContent = st.status === 'error' ? (st.error || 'error') : '';
+
+    const list = data.candidates || [];
+    document.getElementById('results').innerHTML = list.map(renderCandidate).join('');
+
+    await ensureProjectsLoaded();
+    populateProjectSelects();
+
+    // collapse/expand
+    document.querySelectorAll('.btnToggle').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const targetId = e.currentTarget.getAttribute('data-target');
+        const el = document.getElementById(targetId);
+        if (!el) return;
+        el.classList.toggle('collapsed');
+        e.currentTarget.textContent = el.classList.contains('collapsed') ? 'Why ▸' : 'Why ▾';
+      });
+    });
+
+    // copy buttons
+    document.querySelectorAll('.btnCopy').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const text = e.currentTarget.getAttribute('data-copy') || '';
+        if (!text) return;
+        try {
+          const old = e.currentTarget.textContent;
+          await navigator.clipboard.writeText(text);
+          e.currentTarget.textContent = 'Copied';
+          setTimeout(() => (e.currentTarget.textContent = old), 800);
+        } catch (_) {}
+      });
+    });
+
+    // status select (remember last)
+    const lastStatus = localStorage.getItem('last_project_status') || 'new';
+    document.querySelectorAll('select.statusSel').forEach(sel => {
+      if (sel.__filled) return;
+      sel.__filled = true;
+      if (lastStatus) sel.value = lastStatus;
+      sel.addEventListener('change', () => {
+        localStorage.setItem('last_project_status', sel.value);
+      });
+    });
+
+    // add to project
+    function openProject(pid){
+      if (!pid) return;
+      window.location.href = `/projects-ui#${encodeURIComponent(String(pid))}`;
+    }
+
+    document.querySelectorAll('.btnAddProj').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        if (e.currentTarget.classList.contains('btnOpenProject')) {
+          const pid = e.currentTarget.getAttribute('data-project-id');
+          openProject(pid);
+          return;
+        }
+        const login = e.currentTarget.getAttribute('data-login');
+        const sel = document.querySelector(`select.projSel[data-login="${login}"]`);
+        const statusEl = document.querySelector(`select.statusSel[data-login="${login}"]`);
+        const noteEl = document.querySelector(`input.projNote[data-login="${login}"]`);
+        const pid = sel?.value;
+        if (!pid) return;
+        const note = (noteEl?.value || '').trim();
+        const status = (statusEl?.value || 'new');
+        e.currentTarget.disabled = true;
+        try {
+          const fd = new FormData();
+          fd.append('login', login);
+          fd.append('note', note);
+          fd.append('status', status);
+          await fetch(`/projects/${pid}/add`, { method: 'POST', body: fd });
+          localStorage.setItem('last_project_id', pid);
+          localStorage.setItem('last_project_status', status);
+          e.currentTarget.textContent = 'Added';
+          setTimeout(() => {
+            e.currentTarget.textContent = 'Open project';
+            e.currentTarget.disabled = false;
+            e.currentTarget.classList.add('btnOpenProject');
+            e.currentTarget.setAttribute('data-project-id', String(pid));
+            if (!e.shiftKey) {
+              setTimeout(() => openProject(pid), 150);
+            }
+          }, 650);
+        } finally {
+          if (!e.currentTarget.classList.contains('btnOpenProject')) {
+            e.currentTarget.disabled = false;
+          }
+        }
+      });
+    });
+
+    // If running inside Tauri, open external links via native opener.
+    document.addEventListener('click', async (e) => {
+      const a = e.target?.closest?.('a.extLink');
+      if (!a) return;
+      const url = a.getAttribute('data-url');
+      if (!url) return;
+      const tauriInvoke = window.__TAURI__?.core?.invoke;
+      if (typeof tauriInvoke === 'function') {
+        e.preventDefault();
+        try { await tauriInvoke('open_url', { url }); } catch (_) {}
+      }
+    }, true);
+
+    if (st.status !== 'done' && st.status !== 'error') {
+      setTimeout(poll, 2000);
+    }
+  }
+
+  poll();
+</script>
+{% endblock %}

@@ -1,0 +1,183 @@
+@font-face {
+  font-family: 'Flynn';
+  src: url('./assets/fonts/Flynn Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Flynn';
+  src: url('./assets/fonts/Flynn.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Flynn';
+  src: url('./assets/fonts/Flynn Italic.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Flynn';
+  src: url('./assets/fonts/Flynn Bold Italic.otf') format('opentype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+  --bg: #0b0f14;
+  --panel: #121824;
+  --border: #223044;
+  --text: #e6edf3;
+  --muted: #9aa7b5;
+  --link: #7aa2ff;
+  --accent: #7c3aed;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --panel: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --muted: #57606a;
+    --link: #0969da;
+    --accent: #7c3aed;
+  }
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand img {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.brand .title {
+  font-family: 'FlynnEmbedded', 'Flynn', system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  margin: 0;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 30%, var(--panel));
+  color: var(--text);
+  cursor: pointer;
+}
+
+button:hover {
+  background: color-mix(in srgb, var(--accent) 40%, var(--panel));
+}
+
+.panel {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+.tabbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow-x: auto;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel));
+}
+
+.tab .x {
+  opacity: 0.8;
+  border: 0;
+  background: transparent;
+  padding: 0 4px;
+}
+
+.tabviews {
+  width: 100%;
+}
+
+iframe.tabview {
+  width: 100%;
+  height: calc(100vh - 230px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}

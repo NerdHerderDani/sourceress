@@ -1,0 +1,26 @@
+# monorepo ignores
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/venv/
+**/.env
+
+# Backend data/build
+backend/data/*.db
+backend/data/*.sqlite
+backend/data/uvicorn.log
+backend/data/last_port.txt
+backend/build/
+backend/dist/
+backend/*.spec
+
+# Node/Tauri
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/bin/
+
+# OS
+.DS_Store
+Thumbs.db

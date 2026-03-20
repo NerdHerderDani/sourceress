@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0; font-family: 'Flynn', system-ui, sans-serif; font-weight:700;">Stack Overflow</h1>
+      <div class="hint">Find top answerers active in tagged questions (last N days).</div>
+    </div>
+    <div>
+      <a href="/">GitHub</a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <form method="post" action="/stack/search" id="stackForm">
+      <label>Tags</label>
+      <div class="chips" id="soTags"></div>
+      <input type="hidden" name="tags" id="soTagsHidden" />
+
+      <div class="row" style="margin-top:12px;">
+        <div>
+          <label>Match</label>
+          <select name="match" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+            <option value="any">ANY (OR)</option>
+            <option value="all">ALL (AND)</option>
+          </select>
+        </div>
+        <div>
+          <label>Days</label>
+          <input name="days" type="number" min="7" max="365" value="90" />
+        </div>
+        <div>
+          <label>Min reputation</label>
+          <input name="min_rep" type="number" min="0" value="0" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Min answers (in sampled questions)</label>
+          <input name="min_answers" type="number" min="0" value="0" />
+        </div>
+        <div class="hint" style="align-self:flex-end;">0 = no filter</div>
+        <div></div>
+      </div>
+
+      <div style="margin-top: 10px; display:flex; justify-content: space-between; align-items:center; gap: 12px;">
+        <button type="submit">Search</button>
+        <div class="hint">This uses StackExchange API (no scraping).</div>
+      </div>
+    </form>
+  </div>
+
+<script>
+  function makeChips(containerId, hiddenId, placeholder) {
+    const container = document.getElementById(containerId);
+    const hidden = document.getElementById(hiddenId);
+
+    const input = document.createElement('input');
+    input.className = 'chipInput';
+    input.placeholder = placeholder;
+
+    let items = [];
+
+    function syncHidden() { hidden.value = items.join(','); }
+    function render() {
+      container.innerHTML = '';
+      items.forEach((t) => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.innerHTML = `<span>${t.replaceAll('<','&lt;')}</span>`;
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.textContent = '✕';
+        x.addEventListener('click', () => {
+          items = items.filter(v => v !== t);
+          syncHidden();
+          render();
+        });
+        chip.appendChild(x);
+        container.appendChild(chip);
+      });
+      container.appendChild(input);
+    }
+
+    function addFromInput() {
+      const raw = input.value.trim();
+      if (!raw) return;
+      raw.split(',').map(x => x.trim()).filter(Boolean).forEach(v => {
+        if (!items.includes(v)) items.push(v);
+      });
+      input.value = '';
+      syncHidden();
+      render();
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ',') {
+        e.preventDefault();
+        addFromInput();
+      }
+      if (e.key === 'Backspace' && !input.value && items.length) {
+        items.pop();
+        syncHidden();
+        render();
+      }
+    });
+
+    container.addEventListener('click', () => input.focus());
+    input.addEventListener('blur', () => addFromInput());
+
+    syncHidden();
+    render();
+
+    return { input, addFromInput, getItems: () => items.slice() };
+  }
+
+  const tagsChips = makeChips('soTags', 'soTagsHidden', 'e.g. go, kubernetes, grpc');
+
+  // If you type but don't hit Enter, we still want it included when you press Search.
+  document.getElementById('stackForm')?.addEventListener('submit', (e) => {
+    try { tagsChips?.addFromInput?.(); } catch (_) {}
+    const hidden = document.getElementById('soTagsHidden');
+    if (!hidden?.value?.trim()) {
+      e.preventDefault();
+      alert('Add at least one tag (press Enter)');
+    }
+  });
+</script>
+{% endblock %}

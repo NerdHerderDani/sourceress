@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block body %}
+<div class="topbar">
+  <div>
+    <h1 style="margin:0">{{ cand.login }}{% if cand.name %} — {{ cand.name }}{% endif %}</h1>
+    <div class="hint">{{ cand.location }}{% if cand.company %} · {{ cand.company }}{% endif %}</div>
+  </div>
+  <div>
+    <a href="/">New search</a>
+  </div>
+</div>
+
+<div class="card" style="display:block">
+  <div style="display:flex; gap:14px; align-items:flex-start;">
+    <img class="avatar" src="{{ cand.avatar_url }}" style="width:72px; height:72px;" />
+    <div style="flex:1">
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <a class="extLink" href="/out?url={{ cand.html_url | urlencode }}">Open GitHub</a>
+        <span class="badge"><strong>Followers</strong> {{ cand.followers }}</span>
+      </div>
+      {% if cand.bio %}
+        <div class="meta" style="margin-top:8px; white-space:pre-wrap;">{{ cand.bio }}</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card" style="display:block">
+  <div style="display:flex; justify-content: space-between; align-items: baseline; gap: 10px;">
+    <h2 style="margin:0">Experience</h2>
+    <span class="hint">Paste from LinkedIn (manual)</span>
+  </div>
+
+  <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top: 10px;">
+    <div class="badge"><strong>Total exp</strong> {{ stats.total }}</div>
+    <div class="badge"><strong>Current tenure</strong> {{ stats.current }}</div>
+    <div class="badge"><strong>Avg tenure</strong> {{ stats.avg }}</div>
+  </div>
+
+  {% if warnings and warnings|length %}
+    <div class="hint" style="margin-top:10px; white-space:pre-wrap;">Warnings: {{ warnings|join('; ') }}</div>
+  {% endif %}
+
+  <form method="post" action="/candidates/{{ cand.login }}/experience/import-paste" style="margin-top: 14px;">
+    <textarea name="raw_text" rows="10" placeholder="Paste LinkedIn Experience text here…" style="width:100%;"></textarea>
+    <div style="display:flex; gap:10px; margin-top: 10px; align-items:center;">
+      <label style="display:flex; gap:8px; align-items:center;" class="hint">
+        <input type="checkbox" name="confirm_replace" value="yes" />
+        Replace existing imported experience
+      </label>
+      <button type="submit">Import</button>
+    </div>
+    <div class="hint" style="margin-top:6px;">
+      Tip: You may need to right-click → Copy on LinkedIn. If parsing is messy, paste smaller chunks (one role at a time).
+    </div>
+  </form>
+
+  <hr style="border:0; border-top:1px solid var(--border); margin: 16px 0;" />
+
+  {% if items and items|length %}
+    <div style="display:flex; flex-direction:column; gap: 12px;">
+      {% for it in items %}
+        <div class="card" style="margin:0;">
+          <div style="display:flex; justify-content: space-between; gap: 14px;">
+            <div>
+              <div style="font-weight:700;">{{ it.title or '—' }}</div>
+              <div class="meta">{{ it.company }}{% if it.location %} · {{ it.location }}{% endif %}</div>
+            </div>
+            <div class="hint" style="text-align:right; white-space:nowrap;">
+              {{ it.date_range }}
+              <div class="meta">{{ it.duration }}</div>
+            </div>
+          </div>
+          {% if it.bullets and it.bullets|length %}
+            <ul style="margin: 10px 0 0 18px;">
+              {% for b in it.bullets %}
+                <li>{{ b }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="hint">No imported experience yet.</div>
+  {% endif %}
+</div>
+{% endblock %}
