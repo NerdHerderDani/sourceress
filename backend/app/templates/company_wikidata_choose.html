@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="topbar">
+  <div>
+    <h1 style="margin:0">Link Wikidata — {{ c.name }}</h1>
+    <div class="hint">Pick the correct entity (so industries/domains aren’t nonsense).</div>
+  </div>
+  <div>
+    <a href="/companies/{{ c.id }}">← Company</a>
+    &nbsp;|&nbsp;
+    <a href="/companies">Companies</a>
+  </div>
+</div>
+
+<div class="panel">
+  {% if msg %}
+    <div class="hint" style="margin-bottom: 10px;">{{ msg }}</div>
+  {% endif %}
+
+  {% if hits and hits|length %}
+    <div class="hint">Search results for <code>{{ c.name }}</code></div>
+
+    <div style="display:flex; flex-direction:column; gap: 10px; margin-top: 10px;">
+      {% for h in hits %}
+        <div class="card" style="margin:0; display:block;">
+          <div style="display:flex; justify-content:space-between; gap: 12px; align-items:baseline;">
+            <div>
+              <div style="font-weight:800;">{{ h.label }} <span class="hint">({{ h.id }})</span></div>
+              <div class="hint">{{ h.description }}</div>
+            </div>
+            <form method="post" action="/companies/{{ c.id }}/wikidata/set" style="margin:0;">
+              <input type="hidden" name="qid" value="{{ h.id }}" />
+              <button type="submit">Select</button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="hint">No results found for <code>{{ c.name }}</code>. Try editing the company name, or link manually later.</div>
+  {% endif %}
+
+  <div class="hint" style="margin-top: 12px;">Tip: if there are multiple similarly named companies, pick the one whose description matches the industry/location.</div>
+</div>
+{% endblock %}

@@ -350,33 +350,85 @@ def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''),
         return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
 
 
+@app.get('/companies/{company_id:int}/wikidata/choose', response_class=HTMLResponse)
+def company_wikidata_choose(request: Request, company_id: int, msg: str = Query(default='')):
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+
+    hits = []
+    try:
+        hits = search_company_qid(c.name, limit=8)
+    except Exception as e:
+        msg = (msg or '') + ((' | ' if msg else '') + str(e))
+
+    return templates.TemplateResponse('company_wikidata_choose.html', {
+        'request': request,
+        'c': c,
+        'hits': hits,
+        'msg': msg,
+    })
+
+
+@app.post('/companies/{company_id:int}/wikidata/set')
+def company_wikidata_set(company_id: int, qid: str = Form('')):
+    q = (qid or '').strip()
+    if not q:
+        return RedirectResponse(url=f'/companies/{company_id}/wikidata/choose?msg=Missing+QID', status_code=303)
+
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+
+        wd = None
+        try:
+            wd = fetch_company(q)
+        except Exception as e:
+            return RedirectResponse(url=f'/companies/{company_id}/wikidata/choose?msg=' + __import__('urllib.parse').parse.quote(str(e)), status_code=303)
+
+        if not wd:
+            return RedirectResponse(url=f'/companies/{company_id}/wikidata/choose?msg=Not+found', status_code=303)
+
+        c.wikidata_id = wd.qid
+        c.industry_tags = wd.industry_labels or []
+        doms = set([d for d in (c.domains or []) if isinstance(d, str) and d])
+        for d in (wd.domains or []):
+            if d:
+                doms.add(d)
+        c.domains = sorted(doms)
+        c.updated_at = __import__('datetime').datetime.utcnow()
+        s.add(c)
+        s.commit()
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
 @app.post('/companies/{company_id:int}/wikidata/refresh')
 def company_refresh_wikidata(company_id: int):
-    """Enrich company with free Wikidata: industries + website domain.
+    """Refresh Wikidata enrichment.
 
-    MVP: pick top wbsearchentities hit. Later: allow user to choose.
+    If not linked yet, redirect to chooser.
     """
     with get_session() as s:
         c = s.get(Company, company_id)
         if not c:
             return HTMLResponse('company not found', status_code=404)
 
-        # If already linked, refresh from that QID; else search by name.
+        if not (c.wikidata_id or '').strip():
+            return RedirectResponse(url=f'/companies/{company_id}/wikidata/choose', status_code=303)
+
         wd = None
         err = ''
         try:
-            if (c.wikidata_id or '').strip():
-                wd = fetch_company(c.wikidata_id)
-            else:
-                wd = enrich_company_by_name(c.name)
+            wd = fetch_company(c.wikidata_id)
         except Exception as e:
             wd = None
             err = str(e)
 
         if wd:
-            c.wikidata_id = wd.qid
             c.industry_tags = wd.industry_labels or []
-            # merge domains (keep existing)
             doms = set([d for d in (c.domains or []) if isinstance(d, str) and d])
             for d in (wd.domains or []):
                 if d:
