@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="topbar">
+  <div>
+    <h1 style="margin:0">{{ c.name }}</h1>
+    <div class="hint">Signals: layoffs · funding · comp (MVP: manual + link-outs)</div>
+  </div>
+  <div>
+    <a href="/companies">← Companies</a>
+    &nbsp;|&nbsp;
+    <a href="/projects-ui">Projects</a>
+  </div>
+</div>
+
+<div class="panel">
+  <div style="display:flex; gap: 10px; flex-wrap:wrap; align-items:center;">
+    <button type="button" onclick="openUrl('{{ google_url }}')">Google</button>
+    <button type="button" onclick="openUrl('{{ layoffs_url }}')">layoffs.fyi</button>
+    <button type="button" onclick="openUrl('{{ levels_url }}')">Levels.fyi</button>
+    <button type="button" onclick="openUrl('{{ crunch_url }}')">Crunchbase</button>
+  </div>
+
+  <script>
+    function openUrl(url){
+      if(!url) return;
+      const tauriInvoke = window.__TAURI__?.core?.invoke;
+      if (typeof tauriInvoke === 'function') {
+        tauriInvoke('open_url', { url }).catch(()=>{});
+        return;
+      }
+      window.open(url, '_blank', 'noopener');
+    }
+  </script>
+
+  <hr style="border:0; border-top:1px solid var(--border); margin: 16px 0;" />
+
+  <div class="card" style="margin:0; display:block;">
+    <h2 style="margin:0">Comp band (manual for now)</h2>
+    <div class="hint" style="margin-top:6px;">Store rough ranges so you can prioritize outreach. Example: SWE 180-230-300.</div>
+
+    <form method="post" action="/companies/{{ c.id }}/comp" style="margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+      <div>
+        <div class="hint">Role</div>
+        <input name="role" placeholder="SWE" value="" style="width:120px;" />
+      </div>
+      <div>
+        <div class="hint">Low</div>
+        <input name="low" placeholder="180000" value="" style="width:120px;" />
+      </div>
+      <div>
+        <div class="hint">Mid</div>
+        <input name="mid" placeholder="230000" value="" style="width:120px;" />
+      </div>
+      <div>
+        <div class="hint">High</div>
+        <input name="high" placeholder="300000" value="" style="width:120px;" />
+      </div>
+      <div style="flex:1; min-width:240px;">
+        <div class="hint">Notes</div>
+        <input name="notes" placeholder="SF Bay, staff+" value="" style="width:100%;" />
+      </div>
+      <button type="submit">Save</button>
+    </form>
+
+    {% if comp_rows and comp_rows|length %}
+      <div style="margin-top:12px; display:flex; flex-direction:column; gap:8px;">
+        {% for r in comp_rows %}
+          <div class="info" style="display:flex; justify-content:space-between; gap:10px;">
+            <div><strong>{{ r.role }}</strong> {% if r.notes %}<span class="hint">— {{ r.notes }}</span>{% endif %}</div>
+            <div class="hint">{{ r.low }} / {{ r.mid }} / {{ r.high }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="hint" style="margin-top:12px;">No comp rows yet.</div>
+    {% endif %}
+  </div>
+
+  <div class="card" style="margin-top: 14px; display:block;">
+    <h2 style="margin:0">Signals (coming next)</h2>
+    <div class="hint" style="margin-top: 6px;">Next: wire in free sources like GDELT (news spikes) + Wikidata industry tags.</div>
+  </div>
+</div>
+{% endblock %}

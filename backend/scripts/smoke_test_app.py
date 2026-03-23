@@ -1,11 +1,18 @@
 import os, sys, subprocess
 from pathlib import Path
 
-# Use isolated sqlite DB
+# Use isolated sqlite DB (reset each run)
 os.environ['DB_URL'] = 'sqlite:///./data/smoke.db'
 
 HERE = Path(__file__).resolve().parent
 BACKEND = HERE.parent
+
+try:
+    p = (BACKEND / 'data' / 'smoke.db')
+    if p.exists():
+        p.unlink()
+except Exception:
+    pass
 
 # Run migrations
 subprocess.check_call([sys.executable, '-m', 'alembic', 'upgrade', 'head'], cwd=str(BACKEND))

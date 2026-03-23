@@ -23,6 +23,7 @@ from .saved_searches import SavedSearch
 from .projects import Project, ProjectCandidate
 from .project_entity import ProjectEntity
 from .models import SearchRun, Candidate
+from .company_signals import Company, CompanySignal, upsert_company, norm_company_name
 from .experience import CandidateExperience, parse_linkedin_experience_paste, compute_experience_stats, fmt_months
 from .auth import get_bearer_token, verify_supabase_jwt, email_allowed
 from .secrets_store import set_github_token, get_github_token
@@ -225,6 +226,125 @@ def openalex_index(request: Request):
     return templates.TemplateResponse('openalex.html', {'request': request})
 
 
+@app.get('/companies', response_class=HTMLResponse)
+def companies_index(request: Request, msg: str = Query(default='')):
+    from sqlmodel import select
+
+    with get_session() as s:
+        companies = s.exec(select(Company).order_by(Company.updated_at.desc())).all()
+        cands = s.exec(select(Candidate).where(Candidate.company != '')).all()
+
+    # Candidate counts by normalized company string
+    counts: dict[str, int] = {}
+    for cand in cands:
+        nn = norm_company_name(cand.company or '')
+        if not nn:
+            continue
+        counts[nn] = counts.get(nn, 0) + 1
+
+    rows = []
+    for c in companies:
+        rows.append({
+            'id': c.id,
+            'name': c.name,
+            'origin': c.origin,
+            'industry_tags': c.industry_tags or [],
+            'candidate_count': counts.get(c.norm_name or '', 0),
+        })
+
+    return templates.TemplateResponse('companies.html', {'request': request, 'companies': rows, 'msg': msg})
+
+
+@app.post('/companies/add')
+def companies_add(name: str = Form('')):
+    nm = (name or '').strip()
+    if not nm:
+        return RedirectResponse(url='/companies?msg=Missing+company+name', status_code=303)
+
+    with get_session() as s:
+        c = upsert_company(s, nm, origin='manual')
+
+    if not c:
+        return RedirectResponse(url='/companies?msg=Invalid+company+name', status_code=303)
+
+    return RedirectResponse(url=f'/companies/{c.id}', status_code=303)
+
+
+@app.get('/companies/{company_id:int}', response_class=HTMLResponse)
+def company_detail(request: Request, company_id: int):
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+
+    q = c.name
+    google_url = f"https://www.google.com/search?q={q}"
+    layoffs_url = f"https://layoffs.fyi/?query={q}"
+    levels_url = f"https://www.levels.fyi/companies/?search={q}"
+    crunch_url = f"https://www.crunchbase.com/textsearch?q={q}"
+
+    comp_rows = []
+    try:
+        cj = c.comp_json or {}
+        for role, v in cj.items():
+            if not isinstance(v, dict):
+                continue
+            comp_rows.append({
+                'role': role,
+                'low': v.get('low', ''),
+                'mid': v.get('mid', ''),
+                'high': v.get('high', ''),
+                'notes': v.get('notes', ''),
+            })
+        comp_rows = sorted(comp_rows, key=lambda r: r.get('role') or '')
+    except Exception:
+        comp_rows = []
+
+    return templates.TemplateResponse('company_detail.html', {
+        'request': request,
+        'c': c,
+        'google_url': google_url,
+        'layoffs_url': layoffs_url,
+        'levels_url': levels_url,
+        'crunch_url': crunch_url,
+        'comp_rows': comp_rows,
+    })
+
+
+@app.post('/companies/{company_id:int}/comp')
+def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''), mid: str = Form(''), high: str = Form(''), notes: str = Form('')):
+    rl = (role or '').strip()
+    if not rl:
+        return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+    def _to_int(x: str):
+        x = (x or '').strip().replace(',', '')
+        if not x:
+            return ''
+        try:
+            return int(float(x))
+        except Exception:
+            return x
+
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+        cj = c.comp_json or {}
+        cj[rl] = {
+            'low': _to_int(low),
+            'mid': _to_int(mid),
+            'high': _to_int(high),
+            'notes': (notes or '').strip(),
+        }
+        c.comp_json = cj
+        c.updated_at = __import__('datetime').datetime.utcnow()
+        s.add(c)
+        s.commit()
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
 @app.get('/linkedin', response_class=HTMLResponse)
 def linkedin_index(request: Request, login: str = Query(default='')):
     lg = (login or '').strip()
@@ -377,6 +497,13 @@ def candidate_page(request: Request, login: str):
         cand = s.get(Candidate, login)
         if not cand:
             return HTMLResponse("candidate not found", status_code=404)
+
+        # Auto-discover companies from candidate profiles
+        if (cand.company or '').strip():
+            try:
+                upsert_company(s, cand.company, origin='candidate')
+            except Exception:
+                pass
 
         exps = s.exec(
             select(CandidateExperience)

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="topbar">
+  <div>
+    <h1 style="margin:0">Companies</h1>
+    <div class="hint">Watchlist + auto-discovered from candidates. Signals will live here.</div>
+  </div>
+  <div>
+    <a href="/">GitHub</a>
+    &nbsp;|&nbsp;
+    <a href="/projects-ui">Projects</a>
+    &nbsp;|&nbsp;
+    <a href="/linkedin">LinkedIn</a>
+  </div>
+</div>
+
+<div class="panel">
+  <form method="post" action="/companies/add" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+    <input name="name" placeholder="Add company to watchlist (e.g. Stripe)" style="flex:1; min-width: 320px;" />
+    <button type="submit">Add</button>
+  </form>
+
+  {% if msg %}
+    <div class="hint" style="margin-top:10px;">{{ msg }}</div>
+  {% endif %}
+
+  <div style="margin-top: 14px;" class="hint">Showing {{ companies|length }} companies</div>
+
+  <div style="display:flex; flex-direction:column; gap: 10px; margin-top: 10px;">
+    {% for c in companies %}
+      <div class="card" style="margin:0;">
+        <div style="display:flex; justify-content:space-between; gap: 12px; align-items:baseline;">
+          <div>
+            <div style="font-weight:800; font-size: 1.05rem;">
+              <a href="/companies/{{ c.id }}">{{ c.name }}</a>
+            </div>
+            <div class="hint">origin: {{ c.origin }}{% if c.industry_tags and c.industry_tags|length %} · {{ c.industry_tags|join(', ') }}{% endif %}</div>
+          </div>
+          <div class="badge"><strong>Candidates</strong> {{ c.candidate_count }}</div>
+        </div>
+      </div>
+    {% endfor %}
+
+    {% if not companies or companies|length == 0 %}
+      <div class="hint">No companies yet. Add a watchlist entry above, or run a search and open candidate profiles to auto-populate.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

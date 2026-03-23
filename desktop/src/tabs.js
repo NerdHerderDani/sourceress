@@ -273,6 +273,7 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
     setBaseUrl(b);
     // Projects pinned tab
     addTab({ title: 'Projects', url: b + 'projects-ui', pinned: true });
+    addTab({ title: 'Companies', url: b + 'companies', pinned: false });
     addTab({ title: 'GitHub', url: b, pinned: false });
     addTab({ title: 'Stack', url: b + 'stack', pinned: false });
     addTab({ title: 'OpenAlex', url: b + 'openalex', pinned: false });

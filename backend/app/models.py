@@ -11,6 +11,7 @@ from .projects import Project, ProjectCandidate  # noqa: F401
 from .project_entity import ProjectEntity  # noqa: F401
 from .user_secret_model import UserSecret  # noqa: F401
 from .experience import CandidateExperience  # noqa: F401
+from .company_signals import Company, CompanySignal  # noqa: F401
 
 class SearchRun(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
