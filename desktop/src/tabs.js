@@ -32,8 +32,40 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
       nav.idx = nav.stack.length - 1;
     }
 
+    function wireSameOriginClicks(){
+      try {
+        const doc = iframe.contentWindow?.document;
+        if (!doc) return;
+        if (doc.__sourceressWired) return;
+        doc.__sourceressWired = true;
+
+        doc.addEventListener('click', (e) => {
+          const a = e.target?.closest ? e.target.closest('a') : null;
+          if (!a) return;
+          const href = a.getAttribute('href') || '';
+          if (!href) return;
+
+          // Only intercept internal profile links; keep everything else default.
+          // Accept absolute and relative.
+          const abs = (() => {
+            try { return new URL(href, iframe.contentWindow.location.href).toString(); } catch (_) { return ''; }
+          })();
+
+          // Open candidate profiles in a new tab so the results tab stays put.
+          if (abs && (abs.includes('/candidates/') || abs.match(/\/candidates\//))) {
+            e.preventDefault();
+            e.stopPropagation();
+            addTab({ title: 'Profile', url: abs, pinned: false });
+          }
+        }, true);
+      } catch (_) {
+        // Cross-origin; ignore.
+      }
+    }
+
     iframe.addEventListener('load', () => {
       try { record(); } catch (_) {}
+      try { wireSameOriginClicks(); } catch (_) {}
     });
 
     iframe.src = url;
