@@ -725,64 +725,73 @@ def projects_delete(project_id: int):
 
 @app.get("/projects/{project_id:int}")
 def projects_get(project_id: int):
+    """Return unified project pipeline items.
+
+    In dev, this endpoint should *never* hard-500 without explanation.
+    """
     from sqlmodel import select
-    with get_session() as s:
-        p = s.get(Project, project_id)
-        if not p:
-            return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
 
-        # Unified pipeline items
-        entities = s.exec(
-            select(ProjectEntity)
-            .where(ProjectEntity.project_id == project_id)
-            .order_by(ProjectEntity.updated_at.desc())
-        ).all()
+    try:
+        with get_session() as s:
+            p = s.get(Project, project_id)
+            if not p:
+                return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
 
-        # Back-compat: also show legacy ProjectCandidate rows as github entities
-        legacy = s.exec(
-            select(ProjectCandidate, Candidate)
-            .where(ProjectCandidate.project_id == project_id)
-            .join(Candidate, Candidate.login == ProjectCandidate.login)
-            .order_by(ProjectCandidate.created_at.desc())
-        ).all()
+            # Unified pipeline items
+            entities = s.exec(
+                select(ProjectEntity)
+                .where(ProjectEntity.project_id == project_id)
+                .order_by(ProjectEntity.updated_at.desc())
+            ).all()
 
-    items = []
+            # Back-compat: also show legacy ProjectCandidate rows as github entities
+            legacy = s.exec(
+                select(ProjectCandidate, Candidate)
+                .where(ProjectCandidate.project_id == project_id)
+                .join(Candidate, Candidate.login == ProjectCandidate.login)
+                .order_by(ProjectCandidate.created_at.desc())
+            ).all()
 
-    # New unified
-    for e in entities:
-        items.append({
-            "id": e.id,
-            "source": e.source,
-            "external_id": e.external_id,
-            "display_name": e.display_name,
-            "url": e.url,
-            "avatar": (e.summary_json or {}).get('avatar') or '',
-            "note": e.note,
-            "status": (e.status or 'new'),
-            "added_at": e.created_at.isoformat(),
-            "summary": e.summary_json or {},
-        })
+        items = []
 
-    # Legacy items (skip if already present in entities as github+login)
-    existing_keys = {(it.get('source'), it.get('external_id')) for it in items}
-    for pc, c in legacy:
-        key = ('github', c.login)
-        if key in existing_keys:
-            continue
-        items.append({
-            "id": None,
-            "source": 'github',
-            "external_id": c.login,
-            "display_name": c.name or c.login,
-            "url": c.html_url,
-            "avatar": c.avatar_url,
-            "note": pc.note,
-            "status": getattr(pc, 'status', 'new') or 'new',
-            "added_at": pc.created_at.isoformat(),
-            "summary": {"login": c.login, "location": c.location, "company": c.company, "followers": c.followers},
-        })
+        # New unified
+        for e in entities:
+            items.append({
+                "id": e.id,
+                "source": e.source,
+                "external_id": e.external_id,
+                "display_name": e.display_name,
+                "url": e.url,
+                "avatar": (e.summary_json or {}).get('avatar') or '',
+                "note": e.note,
+                "status": (e.status or 'new'),
+                "added_at": e.created_at.isoformat(),
+                "summary": e.summary_json or {},
+            })
 
-    return JSONResponse({"ok": True, "project": p.model_dump(), "items": items})
+        # Legacy items (skip if already present in entities as github+login)
+        existing_keys = {(it.get('source'), it.get('external_id')) for it in items}
+        for pc, c in legacy:
+            key = ('github', c.login)
+            if key in existing_keys:
+                continue
+            items.append({
+                "id": None,
+                "source": 'github',
+                "external_id": c.login,
+                "display_name": c.name or c.login,
+                "url": c.html_url,
+                "avatar": c.avatar_url,
+                "note": pc.note,
+                "status": getattr(pc, 'status', 'new') or 'new',
+                "added_at": pc.created_at.isoformat(),
+                "summary": {"login": c.login, "location": c.location, "company": c.company, "followers": c.followers},
+            })
+
+        return JSONResponse({"ok": True, "project": p.model_dump(), "items": items})
+
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"projects_get failed: {type(e).__name__}: {e}"}, status_code=500)
 
 
 @app.post("/projects/{project_id:int}/add")
