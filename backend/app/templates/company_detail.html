@@ -88,16 +88,24 @@
         <input name="location" placeholder="SF Bay" value="" style="width:140px;" />
       </div>
       <div>
-        <div class="hint">Low</div>
+        <div class="hint">Base Low</div>
         <input name="low" placeholder="180000" value="" style="width:120px;" />
       </div>
       <div>
-        <div class="hint">Mid</div>
+        <div class="hint">Base Mid</div>
         <input name="mid" placeholder="230000" value="" style="width:120px;" />
       </div>
       <div>
-        <div class="hint">High</div>
+        <div class="hint">Base High</div>
         <input name="high" placeholder="300000" value="" style="width:120px;" />
+      </div>
+      <div>
+        <div class="hint">Bonus</div>
+        <input name="bonus" placeholder="25000" value="" style="width:110px;" />
+      </div>
+      <div>
+        <div class="hint">Equity</div>
+        <input name="equity" placeholder="50000" value="" style="width:110px;" />
       </div>
       <div style="flex:1; min-width:220px;">
         <div class="hint">Source URL</div>
@@ -105,6 +113,112 @@
       </div>
       <button type="submit">Add</button>
     </form>
+
+    <div class="card" style="margin-top: 12px; display:block;">
+      <div style="display:flex; justify-content:space-between; gap: 12px; align-items:baseline;">
+        <div>
+          <div style="font-weight:800;">Add many levels (fast)</div>
+          <div class="hint">Pick a level mode, role + location, then fill the rows you care about.</div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top: 10px;">
+        <div>
+          <div class="hint">Mode</div>
+          <select id="lvlMode">
+            <option value="L">L1–L10</option>
+            <option value="IC">IC3–IC8</option>
+          </select>
+        </div>
+        <div>
+          <div class="hint">Role</div>
+          <input id="bulkRole" placeholder="Software Engineer" style="width:220px;" />
+        </div>
+        <div>
+          <div class="hint">Location</div>
+          <input id="bulkLoc" placeholder="SF Bay" style="width:180px;" />
+        </div>
+        <div style="flex:1; min-width:240px;">
+          <div class="hint">Source URL</div>
+          <input id="bulkSrc" placeholder="https://www.levels.fyi/..." style="width:100%;" />
+        </div>
+        <button type="button" onclick="renderLevels()">Load rows</button>
+      </div>
+
+      <form method="post" action="/companies/{{ c.id }}/comp/bulk-add" style="margin-top: 10px;">
+        <input type="hidden" name="role" id="bulkRoleH" />
+        <input type="hidden" name="location" id="bulkLocH" />
+        <input type="hidden" name="source_url" id="bulkSrcH" />
+        <input type="hidden" name="mode" id="bulkModeH" />
+
+        <div id="levelRows" style="display:flex; flex-direction:column; gap:8px; margin-top: 10px;"></div>
+
+        <div style="display:flex; gap:10px; align-items:center; margin-top: 10px;">
+          <button type="submit" onclick="syncBulkHidden()">Add all filled rows</button>
+          <span class="hint">Only rows with at least one number will be added.</span>
+        </div>
+      </form>
+
+      <script>
+        function syncBulkHidden(){
+          document.getElementById('bulkRoleH').value = (document.getElementById('bulkRole').value || '').trim();
+          document.getElementById('bulkLocH').value = (document.getElementById('bulkLoc').value || '').trim();
+          document.getElementById('bulkSrcH').value = (document.getElementById('bulkSrc').value || '').trim();
+          document.getElementById('bulkModeH').value = (document.getElementById('lvlMode').value || 'L');
+        }
+
+        function mkRow(level){
+          const wrap = document.createElement('div');
+          wrap.className = 'info';
+          wrap.style.display = 'flex';
+          wrap.style.gap = '10px';
+          wrap.style.alignItems = 'flex-end';
+          wrap.style.flexWrap = 'wrap';
+
+          const h = document.createElement('input');
+          h.type = 'hidden';
+          h.name = 'level';
+          h.value = level;
+          wrap.appendChild(h);
+
+          const lab = document.createElement('div');
+          lab.style.minWidth = '60px';
+          lab.innerHTML = '<div class="hint">Level</div><div style="font-weight:800">'+ level +'</div>';
+          wrap.appendChild(lab);
+
+          function inp(name, ph){
+            const d = document.createElement('div');
+            d.innerHTML = '<div class="hint">'+name+'</div>';
+            const i = document.createElement('input');
+            i.name = name.toLowerCase();
+            i.placeholder = ph;
+            i.style.width = '120px';
+            d.appendChild(i);
+            wrap.appendChild(d);
+          }
+
+          inp('low','180000');
+          inp('mid','230000');
+          inp('high','300000');
+          inp('bonus','25000');
+          inp('equity','50000');
+          return wrap;
+        }
+
+        function renderLevels(){
+          const mode = (document.getElementById('lvlMode').value || 'L');
+          const rows = document.getElementById('levelRows');
+          rows.innerHTML = '';
+          const levels = [];
+          if(mode === 'IC'){
+            for(let i=3;i<=8;i++) levels.push('IC'+i);
+          } else {
+            for(let i=1;i<=10;i++) levels.push('L'+i);
+          }
+          levels.forEach(l => rows.appendChild(mkRow(l)));
+        }
+      </script>
+    </div>
 
     <form method="post" action="/companies/{{ c.id }}/comp/import" style="margin-top: 12px;">
       <div class="hint">Bulk import (paste table)</div>
@@ -134,7 +248,7 @@
               {% if r.source_url %}<span class="hint"> · <a class="extLink" href="#" onclick="openUrl('{{ r.source_url }}'); return false;">source</a></span>{% endif %}
             </div>
             <div style="display:flex; gap:10px; align-items:center;">
-              <div class="hint">{{ r.currency }} {{ r.low }} / {{ r.mid }} / {{ r.high }}</div>
+              <div class="hint">{{ r.currency }} base {{ r.low }} / {{ r.mid }} / {{ r.high }}{% if r.bonus %} · bonus {{ r.bonus }}{% endif %}{% if r.equity %} · equity {{ r.equity }}{% endif %}</div>
               <form method="post" action="/companies/{{ c.id }}/comp/{{ r.id }}/delete" style="margin:0;">
                 <button type="submit">Delete</button>
               </form>

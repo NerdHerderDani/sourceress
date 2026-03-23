@@ -341,6 +341,8 @@ def company_detail(request: Request, company_id: int):
                 'low': r.low,
                 'mid': r.mid,
                 'high': r.high,
+                'bonus': getattr(r, 'bonus', 0) or 0,
+                'equity': getattr(r, 'equity', 0) or 0,
                 'source_url': r.source_url,
                 'notes': r.notes,
             })
@@ -424,7 +426,7 @@ def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''),
 
 
 @app.post('/companies/{company_id:int}/comp/add')
-def company_comp_add(company_id: int, role: str = Form(''), level: str = Form(''), location: str = Form(''), currency: str = Form('USD'), low: str = Form(''), mid: str = Form(''), high: str = Form(''), source_url: str = Form(''), notes: str = Form('')):
+def company_comp_add(company_id: int, role: str = Form(''), level: str = Form(''), location: str = Form(''), currency: str = Form('USD'), low: str = Form(''), mid: str = Form(''), high: str = Form(''), bonus: str = Form(''), equity: str = Form(''), source_url: str = Form(''), notes: str = Form('')):
     rl = (role or '').strip()
     if not rl:
         return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
@@ -451,6 +453,8 @@ def company_comp_add(company_id: int, role: str = Form(''), level: str = Form(''
             low=_to_int(low),
             mid=_to_int(mid),
             high=_to_int(high),
+            bonus=_to_int(bonus),
+            equity=_to_int(equity),
             source_url=(source_url or '').strip(),
             notes=(notes or '').strip(),
         )
@@ -469,6 +473,78 @@ def company_comp_delete(company_id: int, row_id: int):
             s.commit()
 
     return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.post('/companies/{company_id:int}/comp/bulk-add')
+def company_comp_bulk_add(
+    company_id: int,
+    role: str = Form(''),
+    location: str = Form(''),
+    source_url: str = Form(''),
+    mode: str = Form('L'),
+    level: list[str] = Form([]),
+    low: list[str] = Form([]),
+    mid: list[str] = Form([]),
+    high: list[str] = Form([]),
+    bonus: list[str] = Form([]),
+    equity: list[str] = Form([]),
+):
+    rl = (role or '').strip()
+    if not rl:
+        return RedirectResponse(url=f'/companies/{company_id}?msg=Missing+role', status_code=303)
+
+    loc = (location or '').strip()
+    src = (source_url or '').strip()
+
+    def _to_int(x: str) -> int:
+        x = (x or '').strip().replace(',', '').replace('$', '')
+        if not x:
+            return 0
+        try:
+            return int(float(x))
+        except Exception:
+            return 0
+
+    n = min(len(level), len(low), len(mid), len(high), len(bonus), len(equity))
+    if n <= 0:
+        return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+    added = 0
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+
+        for i in range(n):
+            lv = (level[i] or '').strip()
+            lo = _to_int(low[i])
+            mi = _to_int(mid[i])
+            hi = _to_int(high[i])
+            bo = _to_int(bonus[i])
+            eq = _to_int(equity[i])
+
+            # Only add if at least something filled
+            if not (lo or mi or hi or bo or eq):
+                continue
+
+            s.add(CompanyCompBand(
+                company_id=company_id,
+                role=rl,
+                level=lv,
+                location=loc,
+                currency='USD',
+                low=lo,
+                mid=mi,
+                high=hi,
+                bonus=bo,
+                equity=eq,
+                source_url=src,
+            ))
+            added += 1
+
+        s.commit()
+
+    return RedirectResponse(url=f'/companies/{company_id}?msg=Added+{added}+rows', status_code=303)
 
 
 @app.post('/companies/{company_id:int}/comp/import')
@@ -506,6 +582,8 @@ def company_comp_import(company_id: int, raw_table: str = Form(''), source_url: 
     idx_low = col_idx('low', 'min')
     idx_mid = col_idx('mid', 'median', 'p50')
     idx_high = col_idx('high', 'max')
+    idx_bonus = col_idx('bonus')
+    idx_equity = col_idx('equity', 'stock')
 
     def _g(r, i):
         if i < 0:
@@ -553,6 +631,8 @@ def company_comp_import(company_id: int, raw_table: str = Form(''), source_url: 
             lowv = _to_int(_g(r, idx_low))
             midv = _to_int(_g(r, idx_mid))
             highv = _to_int(_g(r, idx_high))
+            bonusv = _to_int(_g(r, idx_bonus))
+            equityv = _to_int(_g(r, idx_equity))
 
             # If no header and looks like: role, level, location, low, mid, high
             if not has_header and len(r) >= 6:
@@ -562,6 +642,8 @@ def company_comp_import(company_id: int, raw_table: str = Form(''), source_url: 
                 lowv = _to_int(r[3])
                 midv = _to_int(r[4])
                 highv = _to_int(r[5])
+                bonusv = _to_int(r[6]) if len(r) >= 7 else bonusv
+                equityv = _to_int(r[7]) if len(r) >= 8 else equityv
 
             s.add(CompanyCompBand(
                 company_id=company_id,
@@ -572,6 +654,8 @@ def company_comp_import(company_id: int, raw_table: str = Form(''), source_url: 
                 low=lowv,
                 mid=midv,
                 high=highv,
+                bonus=bonusv,
+                equity=equityv,
                 source_url=(source_url or '').strip(),
             ))
             imported += 1

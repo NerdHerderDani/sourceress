@@ -22,5 +22,9 @@ class CompanyCompBand(SQLModel, table=True):
     mid: int = 0
     high: int = 0
 
+    # Optional components (annualized, best-effort)
+    bonus: int = 0
+    equity: int = 0
+
     source_url: str = Field(default='')
     notes: str = Field(default='')
