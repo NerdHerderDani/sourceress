@@ -2,8 +2,8 @@
 {% block body %}
 <div class="topbar">
   <div>
-    <h1 style="margin:0">Companies</h1>
-    <div class="hint">Watchlist + auto-discovered from candidates. Signals will live here.</div>
+    <h1 style="margin:0">Talent Mapping</h1>
+    <div class="hint">Watchlist + auto-discovered from candidates. Signals, comp, and x-ray execution live here.</div>
   </div>
   <div>
     <a href="/">GitHub</a>
@@ -15,6 +15,99 @@
 </div>
 
 <div class="panel">
+  <div class="card" style="margin:0 0 12px 0; display:block;">
+    <div style="display:flex; justify-content:space-between; gap: 12px; align-items:baseline;">
+      <div>
+        <h2>Live sourcing engine (X‑ray)</h2>
+        <div class="hint">Generates click-to-run Google X‑ray booleans. Stack/skills overlap starts here.</div>
+      </div>
+      <span class="pill">demo</span>
+    </div>
+
+    <div class="row" style="margin-top: 10px; align-items:flex-end; flex-wrap:wrap;">
+      <div>
+        <div class="hint">Target company variants</div>
+        <input id="tmCompany" value="Ava Labs, AvaLabs, AVA Labs" />
+      </div>
+      <div>
+        <div class="hint">Role keywords</div>
+        <input id="tmRole" placeholder="rust, kubernetes, zk" />
+      </div>
+      <div>
+        <div class="hint">Title tokens</div>
+        <input id="tmTitles" value="engineer, developer, backend" />
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top: 10px;">
+      <button type="button" onclick="tmOpen('linkedin')">Open LinkedIn X‑ray</button>
+      <button type="button" onclick="tmOpen('github')">Open GitHub X‑ray</button>
+      <button type="button" onclick="tmCopy()">Copy query</button>
+      <span class="hint" id="tmMsg"></span>
+    </div>
+
+    <div class="hint" style="margin-top: 10px;">Preview</div>
+    <textarea id="tmPreview" rows="2" readonly style="width:100%;"></textarea>
+
+    <script>
+      function _splitCsv(s){
+        return (s||'').split(',').map(x=>x.trim()).filter(Boolean);
+      }
+      function _mkOr(parts){
+        if(!parts.length) return '';
+        if(parts.length === 1) return '"' + parts[0].replaceAll('"','') + '"';
+        return '(' + parts.map(p=>'"'+p.replaceAll('"','')+'"').join(' OR ') + ')';
+      }
+      function tmBuild(kind){
+        const cos = _splitCsv(document.getElementById('tmCompany').value);
+        const role = _splitCsv(document.getElementById('tmRole').value);
+        const titles = _splitCsv(document.getElementById('tmTitles').value);
+
+        const parts = [];
+        if(kind === 'linkedin') parts.push('site:linkedin.com/in');
+        if(kind === 'github') parts.push('(site:github.com OR site:gist.github.com)');
+
+        const co = _mkOr(cos);
+        if(co) parts.push(co);
+
+        const tt = _mkOr(titles);
+        if(tt) parts.push(tt);
+
+        // limit role keywords to keep query sane
+        role.slice(0,6).forEach(k => parts.push('"' + k.replaceAll('"','') + '"'));
+
+        const q = parts.join(' ');
+        document.getElementById('tmPreview').value = q;
+        return q;
+      }
+      function tmOpen(kind){
+        const q = tmBuild(kind);
+        if(!q) return;
+        const url = 'https://www.google.com/search?q=' + encodeURIComponent(q);
+        const tauriInvoke = window.__TAURI__?.core?.invoke;
+        if (typeof tauriInvoke === 'function') {
+          tauriInvoke('open_url', { url }).catch(()=>{});
+          return;
+        }
+        window.open(url, '_blank', 'noopener');
+      }
+      async function tmCopy(){
+        const q = document.getElementById('tmPreview').value || tmBuild('linkedin');
+        try {
+          await navigator.clipboard.writeText(q);
+          const el = document.getElementById('tmMsg');
+          el.textContent = 'Copied.';
+          setTimeout(()=>el.textContent='', 900);
+        } catch (_) {}
+      }
+      ['tmCompany','tmRole','tmTitles'].forEach(id => {
+        const el = document.getElementById(id);
+        el && el.addEventListener('input', ()=>tmBuild('linkedin'));
+      });
+      tmBuild('linkedin');
+    </script>
+  </div>
+
   <form method="post" action="/companies/add" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
     <input name="name" placeholder="Add company to watchlist (e.g. Stripe)" style="flex:1; min-width: 320px;" />
     <button type="submit">Add</button>

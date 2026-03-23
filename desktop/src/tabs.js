@@ -275,7 +275,7 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
     addTab({ title: 'Command', url: b + 'command', pinned: true });
     // Core tools
     addTab({ title: 'Projects', url: b + 'projects-ui', pinned: false });
-    addTab({ title: 'Companies', url: b + 'companies', pinned: false });
+    addTab({ title: 'Talent Mapping', url: b + 'companies', pinned: false });
     addTab({ title: 'GitHub', url: b, pinned: false });
     addTab({ title: 'Stack', url: b + 'stack', pinned: false });
     addTab({ title: 'OpenAlex', url: b + 'openalex', pinned: false });
