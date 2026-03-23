@@ -57,7 +57,7 @@
               <option value="pass">Pass</option>
             </select>
             <input class="projNote" data-login="${esc(c.login)}" placeholder="Note (saved on add)" style="flex:2; min-width: 220px;" value="" />
-            <button class="btnAddProj smallBtn" data-login="${esc(c.login)}" type="button">Add</button>
+            <button class="btnAddProj smallBtn" data-login="${esc(c.login)}" data-name="${esc(c.name || c.login)}" data-url="${esc(c.url || '')}" data-avatar="${esc(c.avatar || '')}" type="button">Add</button>
             <button class="btnCopy smallBtn" data-copy="${esc(c.url)}" type="button">Copy</button>
           </div>
 
@@ -182,7 +182,13 @@
         e.currentTarget.disabled = true;
         try {
           const fd = new FormData();
-          fd.append('login', login);
+          // Stack results: add as ProjectEntity
+          const uid = (login || '').replace('so:','');
+          fd.append('source', 'stack');
+          fd.append('external_id', uid);
+          fd.append('display_name', (e.currentTarget.getAttribute('data-name') || login));
+          fd.append('url', (e.currentTarget.getAttribute('data-url') || ''));
+          fd.append('avatar', (e.currentTarget.getAttribute('data-avatar') || ''));
           fd.append('note', note);
           fd.append('status', status);
           await fetch(`/projects/${pid}/add`, { method: 'POST', body: fd });

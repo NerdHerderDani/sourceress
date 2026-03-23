@@ -17,6 +17,7 @@ from .config import settings
 from .db import init_db, get_session
 from .services.search_service import create_run, populate_run, get_run_results, get_run_status
 from .services.email_service import fetch_email_for_candidate
+from .openalex_client import OpenAlexClient
 from .training import CandidateFeedback
 from .saved_searches import SavedSearch
 from .projects import Project, ProjectCandidate
@@ -217,6 +218,56 @@ def index(request: Request):
 @app.get("/stack", response_class=HTMLResponse)
 def stack_index(request: Request):
     return templates.TemplateResponse("stack_index.html", {"request": request})
+
+
+@app.get('/openalex', response_class=HTMLResponse)
+def openalex_index(request: Request):
+    return templates.TemplateResponse('openalex.html', {'request': request})
+
+
+@app.get('/openalex/search')
+async def openalex_search(mode: str = Query(default='authors'), q: str = Query(default='')):
+    md = (mode or 'authors').strip().lower()
+    query = (q or '').strip()
+    if not query:
+        return JSONResponse({'ok': False, 'error': 'missing q'}, status_code=400)
+
+    oa = OpenAlexClient()
+    try:
+        if md == 'works':
+            data = await oa.search_works(query, per_page=25, page=1)
+            items = []
+            for w in (data.get('results') or []):
+                items.append({
+                    'id': w.get('id') or '',
+                    'url': w.get('id') or w.get('primary_location', {}).get('source', {}).get('host_organization_name', '') or '',
+                    'display_name': w.get('display_name') or '',
+                    'publication_year': w.get('publication_year'),
+                    'cited_by_count': w.get('cited_by_count') or 0,
+                    'venue': ((w.get('primary_location') or {}).get('source') or {}).get('display_name') or '',
+                })
+            # for works, url should be an OpenAlex web URL
+            for it in items:
+                if it.get('id') and isinstance(it['id'], str) and it['id'].startswith('https://openalex.org/'):
+                    it['url'] = it['id']
+            return JSONResponse({'ok': True, 'items': items})
+
+        # default authors
+        data = await oa.search_authors(query, per_page=25, page=1)
+        items = []
+        for a in (data.get('results') or []):
+            inst = (a.get('last_known_institution') or {}).get('display_name') or ''
+            items.append({
+                'id': a.get('id') or '',
+                'url': a.get('id') or '',
+                'display_name': a.get('display_name') or '',
+                'last_known_institution': inst,
+                'works_count': a.get('works_count') or 0,
+                'cited_by_count': a.get('cited_by_count') or 0,
+            })
+        return JSONResponse({'ok': True, 'items': items})
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
 
 
 @app.post("/search")

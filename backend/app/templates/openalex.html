@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0">OpenAlex</h1>
+      <div class="hint">Search authors/works and add to Projects pipeline.</div>
+    </div>
+    <div>
+      <a href="/">GitHub</a>
+      &nbsp;|&nbsp;
+      <a href="/stack">Stack</a>
+      &nbsp;|&nbsp;
+      <a href="/projects-ui">Projects</a>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
+      <div style="flex:2; min-width: 260px;">
+        <div class="hint">Query</div>
+        <input id="q" placeholder="e.g. zero knowledge proof, MPC, consensus" />
+      </div>
+      <div style="width: 180px;">
+        <div class="hint">Mode</div>
+        <select id="mode" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+          <option value="authors">People (authors)</option>
+          <option value="works">Works (papers)</option>
+        </select>
+      </div>
+      <div>
+        <button id="btnSearch">Search</button>
+      </div>
+    </div>
+
+    <div id="err" class="danger" style="margin-top:10px; white-space:pre-wrap;"></div>
+    <div id="results" style="margin-top: 12px;"></div>
+  </div>
+
+<script>
+  function esc(s){ return (s ?? '').toString().replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+  let _projects = null;
+  async function ensureProjectsLoaded(){
+    if (_projects) return _projects;
+    try {
+      const res = await fetch('/projects', {cache:'no-store'});
+      const data = await res.json();
+      _projects = (data.items || []).map(p => ({ id: p.id, name: p.name }));
+    } catch (_) {
+      _projects = [];
+    }
+    return _projects;
+  }
+
+  function projectControls(key, payload){
+    return `
+      <div class="cardActions">
+        <select class="projSel" data-key="${esc(key)}" style="flex:1; min-width: 220px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);"></select>
+        <select class="statusSel" data-key="${esc(key)}" style="width:auto; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+          <option value="new">New</option>
+          <option value="contacted">Contacted</option>
+          <option value="pass">Pass</option>
+        </select>
+        <input class="projNote" data-key="${esc(key)}" placeholder="Note (saved on add)" style="flex:2; min-width: 220px;" value="" />
+        <button class="btnAddProj smallBtn" data-key="${esc(key)}" data-payload='${esc(JSON.stringify(payload))}' type="button">Add</button>
+      </div>
+    `;
+  }
+
+  function populateProjectSelects(){
+    const selects = document.querySelectorAll('select.projSel');
+    const lastPid = localStorage.getItem('last_project_id') || '';
+    selects.forEach(sel => {
+      if (sel.__filled) return;
+      sel.__filled = true;
+      sel.innerHTML = '';
+      const opt0 = document.createElement('option');
+      opt0.value = '';
+      opt0.textContent = _projects?.length ? 'Choose project…' : 'No projects yet';
+      sel.appendChild(opt0);
+      (_projects || []).forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = String(p.id);
+        opt.textContent = p.name;
+        sel.appendChild(opt);
+      });
+      if (lastPid) sel.value = lastPid;
+      sel.addEventListener('change', () => {
+        if (sel.value) localStorage.setItem('last_project_id', sel.value);
+      });
+    });
+  }
+
+  function renderAuthor(a){
+    const id = a.id || '';
+    const url = a.url || '';
+    const name = a.display_name || id;
+    const inst = a.last_known_institution || '';
+    const works = a.works_count ?? 0;
+    const cites = a.cited_by_count ?? 0;
+
+    const payload = {
+      source: 'openalex',
+      external_id: id,
+      display_name: name,
+      url: url,
+      avatar: '',
+      summary: { last_known_institution: inst, works_count: works, cited_by_count: cites }
+    };
+
+    return `
+      <div class="card">
+        <div style="flex:1">
+          <div style="display:flex; justify-content: space-between; gap: 12px; align-items: baseline;">
+            <div>
+              <a class="extLink" data-url="${esc(url)}" href="#">${esc(name)}</a>
+              <span class="pill" style="margin-left:8px;">OpenAlex</span>
+            </div>
+          </div>
+          <div class="meta">${esc(inst)}</div>
+          <div class="meta">Works: ${esc(works)} · Cited by: ${esc(cites)}</div>
+          ${projectControls('a_'+id, payload)}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderWork(w){
+    const id = w.id || '';
+    const url = w.url || '';
+    const title = w.display_name || id;
+    const year = w.publication_year || '';
+    const cites = w.cited_by_count ?? 0;
+    const venue = w.venue || '';
+
+    const payload = {
+      source: 'openalex_work',
+      external_id: id,
+      display_name: title,
+      url: url,
+      avatar: '',
+      summary: { publication_year: year, cited_by_count: cites, venue }
+    };
+
+    return `
+      <div class="card">
+        <div style="flex:1">
+          <div style="display:flex; justify-content: space-between; gap: 12px; align-items: baseline;">
+            <div>
+              <a class="extLink" data-url="${esc(url)}" href="#">${esc(title)}</a>
+              <span class="pill" style="margin-left:8px;">Work</span>
+            </div>
+          </div>
+          <div class="meta">${esc(year)} · ${esc(venue)} · cited by ${esc(cites)}</div>
+          ${projectControls('w_'+id, payload)}
+        </div>
+      </div>
+    `;
+  }
+
+  async function doSearch(){
+    const q = document.getElementById('q').value.trim();
+    const mode = document.getElementById('mode').value;
+    document.getElementById('err').textContent = '';
+    if (!q) return;
+
+    const res = await fetch(`/openalex/search?mode=${encodeURIComponent(mode)}&q=${encodeURIComponent(q)}`, {cache:'no-store'});
+    const data = await res.json();
+    if (!data.ok){
+      document.getElementById('err').textContent = data.error || 'error';
+      return;
+    }
+
+    const items = data.items || [];
+    const html = items.map(it => {
+      return mode === 'works' ? renderWork(it) : renderAuthor(it);
+    }).join('') || '<div class="hint">No results.</div>';
+
+    document.getElementById('results').innerHTML = html;
+
+    await ensureProjectsLoaded();
+    populateProjectSelects();
+
+    // add to project
+    const lastStatus = localStorage.getItem('last_project_status') || 'new';
+    document.querySelectorAll('select.statusSel').forEach(sel => {
+      if (sel.__filled) return;
+      sel.__filled = true;
+      sel.value = lastStatus;
+      sel.addEventListener('change', () => localStorage.setItem('last_project_status', sel.value));
+    });
+
+    function openProject(pid){
+      if (!pid) return;
+      window.location.href = `/projects-ui#${encodeURIComponent(String(pid))}`;
+    }
+
+    document.querySelectorAll('.btnAddProj').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const key = e.currentTarget.getAttribute('data-key');
+        const sel = document.querySelector(`select.projSel[data-key="${key}"]`);
+        const statusEl = document.querySelector(`select.statusSel[data-key="${key}"]`);
+        const noteEl = document.querySelector(`input.projNote[data-key="${key}"]`);
+        const pid = sel?.value;
+        if (!pid) return;
+        const note = (noteEl?.value || '').trim();
+        const status = (statusEl?.value || 'new');
+        const payload = JSON.parse(e.currentTarget.getAttribute('data-payload') || '{}');
+
+        const fd = new FormData();
+        fd.append('source', payload.source || 'openalex');
+        fd.append('external_id', payload.external_id || '');
+        fd.append('display_name', payload.display_name || '');
+        fd.append('url', payload.url || '');
+        fd.append('avatar', payload.avatar || '');
+        fd.append('note', note);
+        fd.append('status', status);
+
+        e.currentTarget.disabled = true;
+        try {
+          await fetch(`/projects/${pid}/add`, { method: 'POST', body: fd });
+          localStorage.setItem('last_project_id', pid);
+          localStorage.setItem('last_project_status', status);
+          e.currentTarget.textContent = 'Added';
+          setTimeout(() => {
+            e.currentTarget.textContent = 'Open project';
+            e.currentTarget.disabled = false;
+            if (!e.shiftKey) setTimeout(() => openProject(pid), 150);
+          }, 650);
+        } finally {
+          e.currentTarget.disabled = false;
+        }
+      });
+    });
+
+    // native open in tauri
+    document.addEventListener('click', async (e) => {
+      const a = e.target?.closest?.('a.extLink');
+      if (!a) return;
+      const url = a.getAttribute('data-url');
+      if (!url) return;
+      const tauriInvoke = window.__TAURI__?.core?.invoke;
+      if (typeof tauriInvoke === 'function') {
+        e.preventDefault();
+        try { await tauriInvoke('open_url', { url }); } catch (_) {}
+      }
+    }, true);
+  }
+
+  document.getElementById('btnSearch').addEventListener('click', doSearch);
+  document.getElementById('q').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+</script>
+{% endblock %}
