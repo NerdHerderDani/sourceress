@@ -4,6 +4,20 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
   let tabs = [];
   let activeId = null;
 
+  // Allow embedded pages to ask the shell to open URLs in new tabs.
+  window.addEventListener('message', (e) => {
+    try {
+      if (e?.data?.type === 'SOURCERESS_OPEN_TAB' && typeof e.data.url === 'string') {
+        const url = e.data.url;
+        if (url.includes('/candidates/')) {
+          addTab({ title: 'Profile', url, pinned: false });
+        } else {
+          addTab({ title: 'Tab', url, pinned: false });
+        }
+      }
+    } catch (_) {}
+  });
+
   function safeHref(iframe){
     if(!iframe) return '';
     try { return String(iframe.contentWindow?.location?.href || iframe.src || ''); } catch (_) { return String(iframe.src || ''); }

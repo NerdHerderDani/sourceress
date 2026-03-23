@@ -46,7 +46,7 @@
         <div style="flex:1">
           <div style="display:flex; justify-content: space-between; gap: 12px; align-items: baseline;">
             <div>
-              <a href="/candidates/${encodeURIComponent(c.login)}?back=${encodeURIComponent('/runs/' + runId)}">${esc(c.login)}</a>${c.name ? ` — ${esc(c.name)}` : ''}
+              <a href="/candidates/${encodeURIComponent(c.login)}?back=${encodeURIComponent('/runs/' + runId)}" onclick="try{window.parent.postMessage({type:'SOURCERESS_OPEN_TAB', url:this.href}, '*');}catch(_){}; return false;">${esc(c.login)}</a>${c.name ? ` — ${esc(c.name)}` : ''}
               <span class="hint">·</span>
               <a class="extLink" data-url="${esc(c.url)}" href="/out?url=${encodeURIComponent(c.url)}">GitHub</a>
             </div>
