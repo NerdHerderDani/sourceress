@@ -525,6 +525,20 @@ def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''),
     return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
 
 
+@app.post('/companies/{company_id:int}/tags')
+def company_tags_save(company_id: int, tags: str = Form('')):
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+        c.tags = (tags or '').strip()
+        c.updated_at = __import__('datetime').datetime.utcnow()
+        s.add(c)
+        s.commit()
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
 @app.post('/companies/{company_id:int}/links')
 def company_links_save(company_id: int, github_org_url: str = Form(''), linkedin_company_url: str = Form(''), jobs_url: str = Form('')):
     with get_session() as s:
@@ -574,6 +588,63 @@ def company_comp_add(company_id: int, role: str = Form(''), level: str = Form(''
             source_url=(source_url or '').strip(),
             notes=(notes or '').strip(),
         )
+        s.add(row)
+        s.commit()
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.get('/companies/{company_id:int}/comp/{row_id:int}/edit', response_class=HTMLResponse)
+def company_comp_edit_page(request: Request, company_id: int, row_id: int):
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        row = s.get(CompanyCompBand, row_id)
+        if not c or not row or row.company_id != company_id:
+            return HTMLResponse('not found', status_code=404)
+
+    return templates.TemplateResponse('comp_edit.html', {'request': request, 'c': c, 'row': row})
+
+
+@app.post('/companies/{company_id:int}/comp/{row_id:int}/edit')
+def company_comp_edit_save(
+    company_id: int,
+    row_id: int,
+    role: str = Form(''),
+    level: str = Form(''),
+    location: str = Form(''),
+    currency: str = Form('USD'),
+    low: str = Form(''),
+    mid: str = Form(''),
+    high: str = Form(''),
+    bonus: str = Form(''),
+    equity: str = Form(''),
+    source_url: str = Form(''),
+    notes: str = Form(''),
+):
+    def _to_int(x: str) -> int:
+        x = (x or '').strip().replace(',', '').replace('$', '')
+        if not x:
+            return 0
+        try:
+            return int(float(x))
+        except Exception:
+            return 0
+
+    with get_session() as s:
+        row = s.get(CompanyCompBand, row_id)
+        if not row or row.company_id != company_id:
+            return HTMLResponse('not found', status_code=404)
+        row.role = (role or '').strip()
+        row.level = (level or '').strip()
+        row.location = (location or '').strip()
+        row.currency = (currency or 'USD').strip() or 'USD'
+        row.low = _to_int(low)
+        row.mid = _to_int(mid)
+        row.high = _to_int(high)
+        row.bonus = _to_int(bonus)
+        row.equity = _to_int(equity)
+        row.source_url = (source_url or '').strip()
+        row.notes = (notes or '').strip()
         s.add(row)
         s.commit()
 

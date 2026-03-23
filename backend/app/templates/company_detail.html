@@ -59,6 +59,24 @@
     </div>
   </div>
 
+  <div class="card" style="margin-top: 12px; display:block;">
+    <div style="display:flex; justify-content:space-between; gap: 12px; align-items:baseline;">
+      <div>
+        <h2>Stack / skills tags</h2>
+        <div class="hint">Comma-separated keywords used for overlap scoring (e.g. rust, zk, kubernetes).</div>
+      </div>
+      <span class="pill">signal</span>
+    </div>
+
+    <form method="post" action="/companies/{{ c.id }}/tags" style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+      <div style="flex:1; min-width: 420px;">
+        <div class="hint">Tags</div>
+        <input name="tags" value="{{ c.tags }}" placeholder="rust, zk, kubernetes, aws" />
+      </div>
+      <button type="submit">Save tags</button>
+    </form>
+  </div>
+
   <div class="hint" style="margin-top: 10px;">Wikidata: {% if c.wikidata_id %}<code>{{ c.wikidata_id }}</code>{% else %}<span class="hint">not linked</span>{% endif %}
     {% if c.industry_tags and c.industry_tags|length %} · industries: {{ c.industry_tags|join(', ') }}{% endif %}
     {% if c.domains and c.domains|length %} · domains: {{ c.domains|join(', ') }}{% endif %}
@@ -281,6 +299,7 @@
             </div>
             <div style="display:flex; gap:10px; align-items:center;">
               <div class="hint">{{ r.currency }} base {{ r.low }} / {{ r.mid }} / {{ r.high }}{% if r.bonus %} · bonus {{ r.bonus }}{% endif %}{% if r.equity %} · equity {{ r.equity }}{% endif %}</div>
+              <a class="pill" href="/companies/{{ c.id }}/comp/{{ r.id }}/edit">Edit</a>
               <form method="post" action="/companies/{{ c.id }}/comp/{{ r.id }}/delete" style="margin:0;">
                 <button type="submit">Delete</button>
               </form>

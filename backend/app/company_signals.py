@@ -53,6 +53,9 @@ class Company(SQLModel, table=True):
     linkedin_company_url: str = Field(default='')
     jobs_url: str = Field(default='')
 
+    # Stack/skills tags (comma-separated for MVP)
+    tags: str = Field(default='')
+
     notes: str = Field(default='')
 
     # Manual compensation notes/bands

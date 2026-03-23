@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="topbar">
+  <div>
+    <h1 style="margin:0">Edit comp row — {{ c.name }}</h1>
+    <div class="hint">Update base/bonus/equity for one role/level/location.</div>
+  </div>
+  <div>
+    <a href="/companies/{{ c.id }}">← Back</a>
+  </div>
+</div>
+
+<div class="panel">
+  <form method="post" action="/companies/{{ c.id }}/comp/{{ row.id }}/edit" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+    <div style="min-width:220px; flex:1;">
+      <div class="hint">Role</div>
+      <input name="role" value="{{ row.role }}" />
+    </div>
+    <div>
+      <div class="hint">Level</div>
+      <input name="level" value="{{ row.level }}" style="width:120px;" />
+    </div>
+    <div>
+      <div class="hint">Location</div>
+      <input name="location" value="{{ row.location }}" style="width:160px;" />
+    </div>
+    <div>
+      <div class="hint">Currency</div>
+      <input name="currency" value="{{ row.currency }}" style="width:100px;" />
+    </div>
+
+    <div>
+      <div class="hint">Base Low</div>
+      <input name="low" value="{{ row.low }}" style="width:120px;" />
+    </div>
+    <div>
+      <div class="hint">Base Mid</div>
+      <input name="mid" value="{{ row.mid }}" style="width:120px;" />
+    </div>
+    <div>
+      <div class="hint">Base High</div>
+      <input name="high" value="{{ row.high }}" style="width:120px;" />
+    </div>
+    <div>
+      <div class="hint">Bonus</div>
+      <input name="bonus" value="{{ row.bonus }}" style="width:110px;" />
+    </div>
+    <div>
+      <div class="hint">Equity</div>
+      <input name="equity" value="{{ row.equity }}" style="width:110px;" />
+    </div>
+
+    <div style="min-width:320px; flex:1;">
+      <div class="hint">Source URL</div>
+      <input name="source_url" value="{{ row.source_url }}" />
+    </div>
+
+    <div style="min-width:320px; flex:1;">
+      <div class="hint">Notes</div>
+      <input name="notes" value="{{ row.notes }}" />
+    </div>
+
+    <button type="submit">Save</button>
+  </form>
+</div>
+{% endblock %}
