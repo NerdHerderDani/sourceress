@@ -4,6 +4,11 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
   let tabs = [];
   let activeId = null;
 
+  function safeHref(iframe){
+    if(!iframe) return '';
+    try { return String(iframe.contentWindow?.location?.href || iframe.src || ''); } catch (_) { return String(iframe.src || ''); }
+  }
+
   function mkId() { return Math.random().toString(36).slice(2); }
 
   function addTab({ title, url, pinned = false }) {
@@ -11,13 +16,30 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
     const iframe = document.createElement('iframe');
     iframe.className = 'tabview';
     iframe.referrerPolicy = 'no-referrer';
+
+    // Per-tab navigation stack (because embedded history can be flaky in some webviews)
+    const nav = { stack: [], idx: -1, suppress: false };
+
+    function record(){
+      if(nav.suppress) return;
+      const href = safeHref(iframe);
+      if(!href) return;
+      const cur = nav.stack[nav.idx];
+      if(cur === href) return;
+      // drop forward history
+      nav.stack = nav.stack.slice(0, nav.idx + 1);
+      nav.stack.push(href);
+      nav.idx = nav.stack.length - 1;
+    }
+
+    iframe.addEventListener('load', () => {
+      try { record(); } catch (_) {}
+    });
+
     iframe.src = url;
 
-    // Minimal: rely on web app's own __TAURI__ open_url logic.
-    // (No cross-origin click interception here.)
-
     containerViews.appendChild(iframe);
-    tabs.push({ id, title, url, pinned, iframe });
+    tabs.push({ id, title, url, pinned, iframe, nav });
     setActive(id);
     render();
     return id;
@@ -47,38 +69,60 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
     });
   }
 
-  function getActiveIframe() {
-    const t = tabs.find(x => x.id === activeId);
-    return t?.iframe;
+  function getActiveTab() {
+    return tabs.find(x => x.id === activeId) || null;
   }
 
   function navBack() {
-    const f = getActiveIframe();
-    try { f?.contentWindow?.history?.back(); } catch (_) {}
+    const t = getActiveTab();
+    if(!t) return;
+    // Prefer our tracked stack
+    if (t.nav && t.nav.idx > 0) {
+      t.nav.idx -= 1;
+      const href = t.nav.stack[t.nav.idx];
+      t.nav.suppress = true;
+      t.iframe.src = href;
+      // allow load handler to run without creating a new entry
+      setTimeout(() => { t.nav.suppress = false; }, 50);
+      return;
+    }
+    try { t.iframe?.contentWindow?.history?.back(); } catch (_) {}
   }
   function navForward() {
-    const f = getActiveIframe();
-    try { f?.contentWindow?.history?.forward(); } catch (_) {}
+    const t = getActiveTab();
+    if(!t) return;
+    if (t.nav && t.nav.idx >= 0 && t.nav.idx < t.nav.stack.length - 1) {
+      t.nav.idx += 1;
+      const href = t.nav.stack[t.nav.idx];
+      t.nav.suppress = true;
+      t.iframe.src = href;
+      setTimeout(() => { t.nav.suppress = false; }, 50);
+      return;
+    }
+    try { t.iframe?.contentWindow?.history?.forward(); } catch (_) {}
   }
   function navReload() {
-    const f = getActiveIframe();
-    try { f?.contentWindow?.location?.reload(); } catch (_) {}
-  }
-
-  function getActiveUrl() {
-    const f = getActiveIframe();
-    if (!f) return '';
-    try {
-      // Same-origin pages can be read.
-      return String(f.contentWindow?.location?.href || f.src || '');
-    } catch (_) {
-      // Cross-origin fallback
-      return String(f.src || '');
+    const t = getActiveTab();
+    if(!t) return;
+    try { t.iframe?.contentWindow?.location?.reload(); } catch (_) {
+      // fallback
+      t.iframe.src = safeHref(t.iframe);
     }
   }
 
+  function getActiveUrl() {
+    const t = getActiveTab();
+    if (!t) return '';
+    // Prefer our tracked URL
+    if (t.nav && t.nav.idx >= 0 && t.nav.stack[t.nav.idx]) {
+      return String(t.nav.stack[t.nav.idx] || '');
+    }
+    return safeHref(t.iframe);
+  }
+
   function requestActiveUrl(timeoutMs = 1200) {
-    const f = getActiveIframe();
+    const t = getActiveTab();
+    const f = t?.iframe;
     if (!f) return Promise.resolve('');
 
     return new Promise((resolve) => {
