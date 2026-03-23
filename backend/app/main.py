@@ -24,6 +24,7 @@ from .projects import Project, ProjectCandidate
 from .project_entity import ProjectEntity
 from .models import SearchRun, Candidate
 from .company_signals import Company, CompanySignal, upsert_company, norm_company_name
+from .comp_bands import CompanyCompBand
 from .gdelt_client import fetch_doc_list
 from .wikidata_client import enrich_company_by_name, fetch_company, search_company_qid
 from .experience import CandidateExperience, parse_linkedin_experience_paste, compute_experience_stats, fmt_months
@@ -319,20 +320,29 @@ def company_detail(request: Request, company_id: int):
     levels_url = f"https://www.levels.fyi/companies/?search={q}"
     crunch_url = f"https://www.crunchbase.com/textsearch?q={q}"
 
+    # Comp bands (table)
     comp_rows = []
     try:
-        cj = c.comp_json or {}
-        for role, v in cj.items():
-            if not isinstance(v, dict):
-                continue
+        from sqlmodel import select
+        with get_session() as s:
+            rows = s.exec(
+                select(CompanyCompBand)
+                .where(CompanyCompBand.company_id == company_id)
+                .order_by(CompanyCompBand.role.asc(), CompanyCompBand.level.asc(), CompanyCompBand.location.asc(), CompanyCompBand.created_at.desc())
+            ).all()
+        for r in rows:
             comp_rows.append({
-                'role': role,
-                'low': v.get('low', ''),
-                'mid': v.get('mid', ''),
-                'high': v.get('high', ''),
-                'notes': v.get('notes', ''),
+                'id': r.id,
+                'role': r.role,
+                'level': r.level,
+                'location': r.location,
+                'currency': r.currency,
+                'low': r.low,
+                'mid': r.mid,
+                'high': r.high,
+                'source_url': r.source_url,
+                'notes': r.notes,
             })
-        comp_rows = sorted(comp_rows, key=lambda r: r.get('role') or '')
     except Exception:
         comp_rows = []
 
@@ -370,9 +380,166 @@ def company_detail(request: Request, company_id: int):
 
 @app.post('/companies/{company_id:int}/comp')
 def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''), mid: str = Form(''), high: str = Form(''), notes: str = Form('')):
+    # Legacy endpoint (kept for compatibility). Prefer /comp/add + table.
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.post('/companies/{company_id:int}/comp/add')
+def company_comp_add(company_id: int, role: str = Form(''), level: str = Form(''), location: str = Form(''), currency: str = Form('USD'), low: str = Form(''), mid: str = Form(''), high: str = Form(''), source_url: str = Form(''), notes: str = Form('')):
     rl = (role or '').strip()
     if not rl:
         return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+    def _to_int(x: str) -> int:
+        x = (x or '').strip().replace(',', '').replace('$', '')
+        if not x:
+            return 0
+        try:
+            return int(float(x))
+        except Exception:
+            return 0
+
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+        row = CompanyCompBand(
+            company_id=company_id,
+            role=rl,
+            level=(level or '').strip(),
+            location=(location or '').strip(),
+            currency=(currency or 'USD').strip() or 'USD',
+            low=_to_int(low),
+            mid=_to_int(mid),
+            high=_to_int(high),
+            source_url=(source_url or '').strip(),
+            notes=(notes or '').strip(),
+        )
+        s.add(row)
+        s.commit()
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.post('/companies/{company_id:int}/comp/{row_id:int}/delete')
+def company_comp_delete(company_id: int, row_id: int):
+    with get_session() as s:
+        row = s.get(CompanyCompBand, row_id)
+        if row and row.company_id == company_id:
+            s.delete(row)
+            s.commit()
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.post('/companies/{company_id:int}/comp/import')
+def company_comp_import(company_id: int, raw_table: str = Form(''), source_url: str = Form(''), replace: str = Form('')):
+    import csv
+    from io import StringIO
+    from sqlmodel import select
+
+    raw = (raw_table or '').strip()
+    if not raw:
+        return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+    # Detect delimiter: tab > comma
+    delim = '\t' if '\t' in raw.splitlines()[0] else ','
+    reader = csv.reader(StringIO(raw), delimiter=delim)
+    rows = [r for r in reader if r and any((c or '').strip() for c in r)]
+    if not rows:
+        return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+    # Header mapping (best-effort)
+    hdr = [c.strip().lower() for c in rows[0]]
+    has_header = any(x in hdr for x in ('role', 'title', 'level', 'location', 'min', 'max', 'low', 'high', 'median', 'mid', 'currency'))
+    data_rows = rows[1:] if has_header else rows
+
+    def col_idx(*names):
+        for n in names:
+            if n in hdr:
+                return hdr.index(n)
+        return -1
+
+    idx_role = col_idx('role', 'title', 'job', 'position')
+    idx_level = col_idx('level', 'lvl')
+    idx_loc = col_idx('location', 'loc')
+    idx_cur = col_idx('currency', 'cur')
+    idx_low = col_idx('low', 'min')
+    idx_mid = col_idx('mid', 'median', 'p50')
+    idx_high = col_idx('high', 'max')
+
+    def _g(r, i):
+        if i < 0:
+            return ''
+        if i >= len(r):
+            return ''
+        return (r[i] or '').strip()
+
+    def _to_int(x: str) -> int:
+        x = (x or '').strip().replace(',', '').replace('$', '')
+        if not x:
+            return 0
+        # handle ranges like 200-250
+        if '-' in x and x.count('-') == 1:
+            a,b = x.split('-',1)
+            try:
+                return int(float(a))
+            except Exception:
+                pass
+        try:
+            return int(float(x))
+        except Exception:
+            return 0
+
+    imported = 0
+
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+
+        if (replace or '').lower() == 'yes':
+            existing = s.exec(select(CompanyCompBand).where(CompanyCompBand.company_id == company_id)).all()
+            for r in existing:
+                s.delete(r)
+            s.commit()
+
+        for r in data_rows:
+            role = _g(r, idx_role) if idx_role >= 0 else (r[0].strip() if r else '')
+            if not role:
+                continue
+            level = _g(r, idx_level)
+            loc = _g(r, idx_loc)
+            cur = _g(r, idx_cur) or 'USD'
+            lowv = _to_int(_g(r, idx_low))
+            midv = _to_int(_g(r, idx_mid))
+            highv = _to_int(_g(r, idx_high))
+
+            # If no header and looks like: role, level, location, low, mid, high
+            if not has_header and len(r) >= 6:
+                role = (r[0] or '').strip()
+                level = (r[1] or '').strip()
+                loc = (r[2] or '').strip()
+                lowv = _to_int(r[3])
+                midv = _to_int(r[4])
+                highv = _to_int(r[5])
+
+            s.add(CompanyCompBand(
+                company_id=company_id,
+                role=role,
+                level=level,
+                location=loc,
+                currency=cur,
+                low=lowv,
+                mid=midv,
+                high=highv,
+                source_url=(source_url or '').strip(),
+            ))
+            imported += 1
+
+        s.commit()
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
 
 
 @app.get('/companies/{company_id:int}/wikidata/choose', response_class=HTMLResponse)

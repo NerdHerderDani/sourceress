@@ -47,13 +47,21 @@
   <hr style="border:0; border-top:1px solid var(--border); margin: 16px 0;" />
 
   <div class="card" style="margin:0; display:block;">
-    <h2 style="margin:0">Comp band (manual for now)</h2>
-    <div class="hint" style="margin-top:6px;">Store rough ranges so you can prioritize outreach. Example: SWE 180-230-300.</div>
+    <h2 style="margin:0">Comp bands</h2>
+    <div class="hint" style="margin-top:6px;">Quick add one row, or bulk import by pasting a table (TSV/CSV).</div>
 
-    <form method="post" action="/companies/{{ c.id }}/comp" style="margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+    <form method="post" action="/companies/{{ c.id }}/comp/add" style="margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
       <div>
         <div class="hint">Role</div>
-        <input name="role" placeholder="SWE" value="" style="width:120px;" />
+        <input name="role" placeholder="Software Engineer" value="" style="width:180px;" />
+      </div>
+      <div>
+        <div class="hint">Level</div>
+        <input name="level" placeholder="L4" value="" style="width:90px;" />
+      </div>
+      <div>
+        <div class="hint">Location</div>
+        <input name="location" placeholder="SF Bay" value="" style="width:140px;" />
       </div>
       <div>
         <div class="hint">Low</div>
@@ -67,19 +75,46 @@
         <div class="hint">High</div>
         <input name="high" placeholder="300000" value="" style="width:120px;" />
       </div>
-      <div style="flex:1; min-width:240px;">
-        <div class="hint">Notes</div>
-        <input name="notes" placeholder="SF Bay, staff+" value="" style="width:100%;" />
+      <div style="flex:1; min-width:220px;">
+        <div class="hint">Source URL</div>
+        <input name="source_url" placeholder="https://www.levels.fyi/..." value="" style="width:100%;" />
       </div>
-      <button type="submit">Save</button>
+      <button type="submit">Add</button>
+    </form>
+
+    <form method="post" action="/companies/{{ c.id }}/comp/import" style="margin-top: 12px;">
+      <div class="hint">Bulk import (paste table)</div>
+      <textarea name="raw_table" rows="7" placeholder="Paste TSV/CSV here (include headers if you want)." style="width:100%;"></textarea>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top: 8px;">
+        <div style="flex:1; min-width:240px;">
+          <div class="hint">Source URL (applied to imported rows)</div>
+          <input name="source_url" placeholder="https://www.levels.fyi/..." value="" style="width:100%;" />
+        </div>
+        <label class="hint" style="display:flex; gap:8px; align-items:center;">
+          <input type="checkbox" name="replace" value="yes" />
+          Replace existing comp rows for this company
+        </label>
+        <button type="submit">Import</button>
+      </div>
+      <div class="hint" style="margin-top:6px;">Supported columns (best-effort): role/title, level, location, low/min, mid/median, high/max, currency.</div>
     </form>
 
     {% if comp_rows and comp_rows|length %}
       <div style="margin-top:12px; display:flex; flex-direction:column; gap:8px;">
         {% for r in comp_rows %}
-          <div class="info" style="display:flex; justify-content:space-between; gap:10px;">
-            <div><strong>{{ r.role }}</strong> {% if r.notes %}<span class="hint">— {{ r.notes }}</span>{% endif %}</div>
-            <div class="hint">{{ r.low }} / {{ r.mid }} / {{ r.high }}</div>
+          <div class="info" style="display:flex; justify-content:space-between; gap:10px; align-items:baseline;">
+            <div>
+              <strong>{{ r.role }}</strong>
+              {% if r.level %}<span class="badge" style="margin-left:6px;">{{ r.level }}</span>{% endif %}
+              {% if r.location %}<span class="hint"> · {{ r.location }}</span>{% endif %}
+              {% if r.source_url %}<span class="hint"> · <a class="extLink" href="#" onclick="openUrl('{{ r.source_url }}'); return false;">source</a></span>{% endif %}
+            </div>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <div class="hint">{{ r.currency }} {{ r.low }} / {{ r.mid }} / {{ r.high }}</div>
+              <form method="post" action="/companies/{{ c.id }}/comp/{{ r.id }}/delete" style="margin:0;">
+                <button type="submit">Delete</button>
+              </form>
+            </div>
           </div>
         {% endfor %}
       </div>
