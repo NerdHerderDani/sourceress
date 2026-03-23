@@ -23,6 +23,7 @@
     <div style="flex:1">
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
         <a class="extLink" href="/out?url={{ cand.html_url | urlencode }}">Open GitHub</a>
+        <a href="/linkedin?login={{ cand.login | urlencode }}">LinkedIn (X‑ray)</a>
         <span class="badge"><strong>Followers</strong> {{ cand.followers }}</span>
       </div>
       {% if cand.bio %}
