@@ -365,6 +365,43 @@ def company_detail(request: Request, company_id: int):
                 'query': v.get('query', '') or '',
             }
 
+    # Aggregate (MVP): aggregate all rows with role containing 'engineer' as default headline
+    agg = {}
+    try:
+        # prefer SWE-ish rows; fallback to all rows
+        swe_rows = [r for r in comp_rows if isinstance(r.get('role'), str) and ('engineer' in r.get('role').lower())]
+        rows_for_agg = swe_rows if swe_rows else comp_rows
+
+        def _median(vals: list[int]) -> int:
+            vals = sorted([int(v) for v in vals if v is not None])
+            if not vals:
+                return 0
+            n = len(vals)
+            mid = n // 2
+            if n % 2 == 1:
+                return vals[mid]
+            return int((vals[mid - 1] + vals[mid]) / 2)
+
+        lows = [r.get('low') or 0 for r in rows_for_agg if (r.get('low') or 0) > 0]
+        mids = [r.get('mid') or 0 for r in rows_for_agg if (r.get('mid') or 0) > 0]
+        highs = [r.get('high') or 0 for r in rows_for_agg if (r.get('high') or 0) > 0]
+        cur = ''
+        for r in rows_for_agg:
+            if (r.get('currency') or '').strip():
+                cur = (r.get('currency') or '').strip()
+                break
+        if lows or mids or highs:
+            agg = {
+                'role': 'SWE (aggregate)' if swe_rows else 'Aggregate',
+                'currency': cur or 'USD',
+                'low': _median(lows) if lows else 0,
+                'mid': _median(mids) if mids else 0,
+                'high': _median(highs) if highs else 0,
+                'n': len(rows_for_agg),
+            }
+    except Exception:
+        agg = {}
+
     return templates.TemplateResponse('company_detail.html', {
         'request': request,
         'c': c,
@@ -373,6 +410,7 @@ def company_detail(request: Request, company_id: int):
         'levels_url': levels_url,
         'crunch_url': crunch_url,
         'comp_rows': comp_rows,
+        'agg': agg,
         'layoffs': layoffs,
         'funding': funding,
     })
@@ -947,9 +985,56 @@ def candidate_page(request: Request, login: str):
 
     back = (request.query_params.get('back') or '').strip()
 
+    # Company comp snapshot (aggregate, SWE-ish)
+    comp_snapshot = None
+    try:
+        if (cand.company or '').strip():
+            nn = norm_company_name(cand.company)
+            from sqlmodel import select
+            with get_session() as s:
+                co = s.exec(select(Company).where(Company.norm_name == nn)).first()
+                if co:
+                    rows = s.exec(select(CompanyCompBand).where(CompanyCompBand.company_id == co.id)).all()
+            if co and rows:
+                # SWE-ish rows
+                swe = [r for r in rows if (r.role or '').lower().find('engineer') >= 0]
+                use = swe if swe else rows
+
+                def _median_int(vals):
+                    vals = sorted([int(v) for v in vals if v is not None])
+                    if not vals:
+                        return 0
+                    n = len(vals)
+                    m = n // 2
+                    if n % 2 == 1:
+                        return vals[m]
+                    return int((vals[m-1] + vals[m]) / 2)
+
+                lows = [r.low for r in use if (r.low or 0) > 0]
+                mids = [r.mid for r in use if (r.mid or 0) > 0]
+                highs = [r.high for r in use if (r.high or 0) > 0]
+                cur = ''
+                for r in use:
+                    if (r.currency or '').strip():
+                        cur = (r.currency or '').strip(); break
+
+                if lows or mids or highs:
+                    comp_snapshot = {
+                        'company_id': co.id,
+                        'company_name': co.name,
+                        'role': 'SWE (aggregate)' if swe else 'Aggregate',
+                        'currency': cur or 'USD',
+                        'low': _median_int(lows) if lows else 0,
+                        'mid': _median_int(mids) if mids else 0,
+                        'high': _median_int(highs) if highs else 0,
+                        'n': len(use),
+                    }
+    except Exception:
+        comp_snapshot = None
+
     return templates.TemplateResponse(
         "candidate.html",
-        {"request": request, "cand": cand, "items": items, "stats": stats, "warnings": warnings, "back": back},
+        {"request": request, "cand": cand, "items": items, "stats": stats, "warnings": warnings, "back": back, "comp_snapshot": comp_snapshot},
     )
 
 

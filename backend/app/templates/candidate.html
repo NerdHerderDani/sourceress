@@ -26,6 +26,16 @@
         <a href="/linkedin?login={{ cand.login | urlencode }}">LinkedIn (X‑ray)</a>
         <span class="badge"><strong>Followers</strong> {{ cand.followers }}</span>
       </div>
+
+      {% if comp_snapshot and comp_snapshot.company_id %}
+        <div class="info" style="margin-top:10px;">
+          <strong>Company comp (aggregate)</strong>
+          — <a href="/companies/{{ comp_snapshot.company_id }}">{{ comp_snapshot.company_name }}</a>
+          — {{ comp_snapshot.currency }} {{ comp_snapshot.low }} / {{ comp_snapshot.mid }} / {{ comp_snapshot.high }}
+          <span class="hint">({{ comp_snapshot.role }}, {{ comp_snapshot.n }} rows)</span>
+        </div>
+      {% endif %}
+
       {% if cand.bio %}
         <div class="meta" style="margin-top:8px; white-space:pre-wrap;">{{ cand.bio }}</div>
       {% endif %}

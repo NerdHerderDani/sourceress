@@ -47,8 +47,15 @@
   <hr style="border:0; border-top:1px solid var(--border); margin: 16px 0;" />
 
   <div class="card" style="margin:0; display:block;">
-    <h2 style="margin:0">Comp bands</h2>
-    <div class="hint" style="margin-top:6px;">Quick add one row, or bulk import by pasting a table (TSV/CSV).</div>
+    <div style="display:flex; justify-content:space-between; gap: 12px; align-items:baseline;">
+      <div>
+        <h2 style="margin:0">Comp bands</h2>
+        <div class="hint" style="margin-top:6px;">Quick add one row, or bulk import by pasting a table (TSV/CSV).</div>
+      </div>
+      {% if agg and agg.role %}
+        <div class="badge"><strong>{{ agg.role }}</strong> {{ agg.currency }} {{ agg.low }} / {{ agg.mid }} / {{ agg.high }}</div>
+      {% endif %}
+    </div>
 
     <form method="post" action="/companies/{{ c.id }}/comp/add" style="margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
       <div>
