@@ -124,14 +124,47 @@
 
     if (!selectedId) {
       selectedId = items[0].id;
+      try { window.location.hash = String(selectedId); } catch (_) {}
+    }
+
+    // Always ensure detail is loaded for selected project
+    const cur = (document.getElementById('projectDetail')?.dataset?.pid || '').trim();
+    if (selectedId && String(cur) !== String(selectedId)) {
       await loadProjectDetail(selectedId);
     }
   }
 
   async function loadProjectDetail(id){
-    const res = await fetch(`/projects/${id}`, {cache:'no-store'});
-    const data = await res.json();
     const el = document.getElementById('projectDetail');
+    el.dataset.pid = String(id || '');
+    el.innerHTML = `<div class="hint">Loading…</div>`;
+
+    let res = null;
+    try {
+      res = await fetch(`/projects/${id}`, {cache:'no-store'});
+    } catch (e) {
+      el.innerHTML = `<div class="danger">Failed to load project (network).
+${esc(String(e)).slice(0,300)}</div>`;
+      return;
+    }
+
+    if (!res.ok){
+      const t = await res.text();
+      el.innerHTML = `<div class="danger">Failed to load project (${res.status}).
+${esc(t).slice(0,500)}</div>`;
+      return;
+    }
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (e) {
+      const t = await res.text();
+      el.innerHTML = `<div class="danger">Project API returned non-JSON.
+${esc(t).slice(0,500)}</div>`;
+      return;
+    }
+
     if (!data.ok){
       el.innerHTML = `<div class="danger">${esc(data.error || 'error')}</div>`;
       return;
