@@ -18,9 +18,39 @@ from app.models import SQLModel  # noqa: E402
 from app.config import settings  # noqa: E402
 
 
+def _ensure_sqlite_dir(db_url: str) -> None:
+    u = (db_url or '').strip()
+    if not u.startswith('sqlite:'):
+        return
+
+    path = ''
+    if u.startswith('sqlite:////'):
+        path = u[len('sqlite:////') - 1:]
+    elif u.startswith('sqlite:///'):
+        path = u[len('sqlite:///'):]
+    elif u.startswith('sqlite://'):
+        path = u[len('sqlite://'):]
+
+    path = (path or '').strip()
+    if not path or path == ':memory:':
+        return
+    if '?' in path:
+        path = path.split('?', 1)[0]
+
+    try:
+        from pathlib import Path
+        p = Path(path)
+        parent = (p.parent if p.parent else Path('.'))
+        parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+
+
 def get_url() -> str:
     # Prefer DATABASE_URL (hosting), then DB_URL, then settings
-    return os.getenv("DATABASE_URL", "") or os.getenv("DB_URL", "") or settings.db_url
+    url = os.getenv("DATABASE_URL", "") or os.getenv("DB_URL", "") or settings.db_url
+    _ensure_sqlite_dir(url)
+    return url
 
 
 target_metadata = SQLModel.metadata
