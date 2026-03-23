@@ -7,10 +7,12 @@
     <div class="hint">{{ cand.location }}{% if cand.company %} · {{ cand.company }}{% endif %}</div>
   </div>
   <div>
+    <a href="#" onclick="history.back(); return false;">← Back</a>
     {% if back %}
-      <a href="{{ back }}">← Back</a>
       &nbsp;|&nbsp;
+      <a href="{{ back }}">Back to results</a>
     {% endif %}
+    &nbsp;|&nbsp;
     <a href="/">New search</a>
   </div>
 </div>
