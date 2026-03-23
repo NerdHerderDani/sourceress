@@ -140,26 +140,36 @@
     const p = data.project;
     const items = data.items || [];
 
+    // Sort newest first by added_at
+    items.sort((a,b) => String(b.added_at||'').localeCompare(String(a.added_at||'')));
+
     function renderCard(c){
       const status = (c.status || 'new').toLowerCase();
       const statusPill = status === 'contacted' ? 'Contacted' : status === 'pass' ? 'Pass' : 'New';
+      const src = (c.source || 'github');
+      const ext = (c.external_id || c.login || '');
+      const name = (c.display_name || c.name || ext);
+      const url = (c.url || '');
+      const avatar = (c.avatar || '');
+      const srcPill = src === 'github' ? 'GitHub' : (src === 'stack' ? 'Stack' : (src === 'openalex' ? 'OpenAlex' : src));
+
       return `
         <div class="card" style="margin: 10px 0;">
-          <div><img class="avatar" src="${esc(c.avatar)}"/></div>
+          <div>${avatar ? `<img class="avatar" src="${esc(avatar)}"/>` : ''}</div>
           <div style="flex:1">
             <div style="display:flex; justify-content: space-between; gap: 12px; align-items: baseline;">
               <div>
-                <a class="extLink" data-url="${esc(c.url)}" href="/out?url=${encodeURIComponent(c.url)}">${esc(c.login)}</a>
-                ${c.name ? ` — ${esc(c.name)}` : ''}
+                ${url ? `<a class="extLink" data-url="${esc(url)}" href="#">${esc(name)}</a>` : `<span>${esc(name)}</span>`}
+                <span class="pill" style="margin-left:8px;">${esc(srcPill)}</span>
                 <span class="pill" style="margin-left:8px;">${esc(statusPill)}</span>
               </div>
               <div style="display:flex; gap:8px; align-items:center;">
-                <select data-status="${esc(c.login)}" style="padding:8px 10px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+                <select data-status-src="${esc(src)}" data-status-ext="${esc(ext)}" style="padding:8px 10px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
                   <option value="new" ${status==='new'?'selected':''}>New</option>
                   <option value="contacted" ${status==='contacted'?'selected':''}>Contacted</option>
                   <option value="pass" ${status==='pass'?'selected':''}>Pass</option>
                 </select>
-                <button type="button" data-remove="${esc(c.login)}">Remove</button>
+                <button type="button" data-remove-src="${esc(src)}" data-remove-ext="${esc(ext)}">Remove</button>
               </div>
             </div>
             ${c.note ? `<div class="meta" style="margin-top:6px;">${esc(c.note)}</div>` : ''}
@@ -206,21 +216,25 @@
       </div>
     `;
 
-    el.querySelectorAll('button[data-remove]').forEach(btn => {
+    el.querySelectorAll('button[data-remove-src]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const login = btn.getAttribute('data-remove');
+        const src = btn.getAttribute('data-remove-src');
+        const ext = btn.getAttribute('data-remove-ext');
         const fd = new FormData();
-        fd.append('login', login);
+        fd.append('source', src);
+        fd.append('external_id', ext);
         await fetch(`/projects/${id}/remove`, {method:'POST', body: fd});
         await loadProjectDetail(id);
       });
     });
 
-    el.querySelectorAll('select[data-status]').forEach(sel => {
+    el.querySelectorAll('select[data-status-src]').forEach(sel => {
       sel.addEventListener('change', async () => {
-        const login = sel.getAttribute('data-status');
+        const src = sel.getAttribute('data-status-src');
+        const ext = sel.getAttribute('data-status-ext');
         const fd = new FormData();
-        fd.append('login', login);
+        fd.append('source', src);
+        fd.append('external_id', ext);
         fd.append('status', sel.value);
         await fetch(`/projects/${id}/status`, {method:'POST', body: fd});
         await loadProjectDetail(id);

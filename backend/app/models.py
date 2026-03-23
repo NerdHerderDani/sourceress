@@ -8,6 +8,7 @@ from sqlmodel import SQLModel, Field, Column, JSON
 from .training import CandidateFeedback  # noqa: F401
 from .saved_searches import SavedSearch  # noqa: F401
 from .projects import Project, ProjectCandidate  # noqa: F401
+from .project_entity import ProjectEntity  # noqa: F401
 from .user_secret_model import UserSecret  # noqa: F401
 from .experience import CandidateExperience  # noqa: F401
 
@@ -22,7 +23,6 @@ class SearchRun(SQLModel, table=True):
     source: str = Field(default="github", index=True)
 
     raw_query: str
-    owner_email: str = Field(default="", index=True)
     repo_seeds: str = ""  # github: comma-separated owner/repo and/or GitHub URLs
 
     # github filters

@@ -20,6 +20,7 @@ from .services.email_service import fetch_email_for_candidate
 from .training import CandidateFeedback
 from .saved_searches import SavedSearch
 from .projects import Project, ProjectCandidate
+from .project_entity import ProjectEntity
 from .models import SearchRun, Candidate
 from .experience import CandidateExperience, parse_linkedin_experience_paste, compute_experience_stats, fmt_months
 from .auth import get_bearer_token, verify_supabase_jwt, email_allowed
@@ -678,7 +679,16 @@ def projects_get(project_id: int):
         p = s.get(Project, project_id)
         if not p:
             return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
-        rows = s.exec(
+
+        # Unified pipeline items
+        entities = s.exec(
+            select(ProjectEntity)
+            .where(ProjectEntity.project_id == project_id)
+            .order_by(ProjectEntity.updated_at.desc())
+        ).all()
+
+        # Back-compat: also show legacy ProjectCandidate rows as github entities
+        legacy = s.exec(
             select(ProjectCandidate, Candidate)
             .where(ProjectCandidate.project_id == project_id)
             .join(Candidate, Candidate.login == ProjectCandidate.login)
@@ -686,15 +696,39 @@ def projects_get(project_id: int):
         ).all()
 
     items = []
-    for pc, c in rows:
+
+    # New unified
+    for e in entities:
         items.append({
-            "login": c.login,
+            "id": e.id,
+            "source": e.source,
+            "external_id": e.external_id,
+            "display_name": e.display_name,
+            "url": e.url,
+            "avatar": (e.summary_json or {}).get('avatar') or '',
+            "note": e.note,
+            "status": (e.status or 'new'),
+            "added_at": e.created_at.isoformat(),
+            "summary": e.summary_json or {},
+        })
+
+    # Legacy items (skip if already present in entities as github+login)
+    existing_keys = {(it.get('source'), it.get('external_id')) for it in items}
+    for pc, c in legacy:
+        key = ('github', c.login)
+        if key in existing_keys:
+            continue
+        items.append({
+            "id": None,
+            "source": 'github',
+            "external_id": c.login,
+            "display_name": c.name or c.login,
             "url": c.html_url,
-            "name": c.name,
             "avatar": c.avatar_url,
             "note": pc.note,
             "status": getattr(pc, 'status', 'new') or 'new',
             "added_at": pc.created_at.isoformat(),
+            "summary": {"login": c.login, "location": c.location, "company": c.company, "followers": c.followers},
         })
 
     return JSONResponse({"ok": True, "project": p.model_dump(), "items": items})
@@ -703,7 +737,14 @@ def projects_get(project_id: int):
 @app.post("/projects/{project_id:int}/add")
 def projects_add(
     project_id: int,
-    login: str = Form(...),
+    # github legacy
+    login: str = Form(""),
+    # generic
+    source: str = Form(""),
+    external_id: str = Form(""),
+    display_name: str = Form(""),
+    url: str = Form(""),
+    avatar: str = Form(""),
     note: str = Form(""),
     status: str = Form("new"),
 ):
@@ -714,25 +755,84 @@ def projects_add(
     if status not in ('new', 'contacted', 'pass'):
         status = 'new'
 
+    src = (source or '').strip().lower()
+    ext = (external_id or '').strip()
+
+    # Back-compat: if login provided, treat as github
+    if (not src or not ext) and (login or '').strip():
+        src = 'github'
+        ext = (login or '').strip()
+
+    if not src or not ext:
+        return JSONResponse({"ok": False, "error": "missing source/external_id"}, status_code=400)
+
     with get_session() as s:
         p = s.get(Project, project_id)
         if not p:
             return JSONResponse({"ok": False, "error": "project not found"}, status_code=404)
-        c = s.get(Candidate, login)
-        if not c:
-            return JSONResponse({"ok": False, "error": "candidate not found"}, status_code=404)
+
+        summary = {}
+        # If github, enrich from Candidate row when possible
+        if src == 'github':
+            c = s.get(Candidate, ext)
+            if c:
+                summary = {"login": c.login, "location": c.location, "company": c.company, "followers": c.followers, "avatar": c.avatar_url}
+                if not display_name:
+                    display_name = c.name or c.login
+                if not url:
+                    url = c.html_url
+                if not avatar:
+                    avatar = c.avatar_url
+
+        if avatar:
+            summary["avatar"] = avatar
 
         existing = s.exec(
-            select(ProjectCandidate).where(ProjectCandidate.project_id == project_id, ProjectCandidate.login == login)
+            select(ProjectEntity).where(
+                ProjectEntity.project_id == project_id,
+                ProjectEntity.source == src,
+                ProjectEntity.external_id == ext,
+            )
         ).first()
+
         if existing:
             existing.note = note or existing.note
-            # If caller provided a status, let it update too.
             if status:
                 existing.status = status
+            if display_name:
+                existing.display_name = display_name
+            if url:
+                existing.url = url
+            if summary:
+                existing.summary_json = {**(existing.summary_json or {}), **summary}
+            existing.updated_at = datetime.utcnow()
             s.add(existing)
         else:
-            s.add(ProjectCandidate(project_id=project_id, login=login, note=note, status=status))
+            s.add(
+                ProjectEntity(
+                    project_id=project_id,
+                    source=src,
+                    external_id=ext,
+                    display_name=display_name or ext,
+                    url=url,
+                    summary_json=summary,
+                    status=status,
+                    note=note,
+                    updated_at=datetime.utcnow(),
+                )
+            )
+
+        # Keep legacy table updated for github only (compat)
+        if src == 'github':
+            pc = s.exec(
+                select(ProjectCandidate).where(ProjectCandidate.project_id == project_id, ProjectCandidate.login == ext)
+            ).first()
+            if pc:
+                pc.note = note or pc.note
+                pc.status = status
+                s.add(pc)
+            else:
+                s.add(ProjectCandidate(project_id=project_id, login=ext, note=note, status=status))
 
         p.updated_at = datetime.utcnow()
         s.add(p)
@@ -742,27 +842,59 @@ def projects_add(
 
 
 @app.post("/projects/{project_id:int}/remove")
-def projects_remove(project_id: int, login: str = Form(...)):
+def projects_remove(
+    project_id: int,
+    login: str = Form(""),
+    source: str = Form(""),
+    external_id: str = Form(""),
+):
     from datetime import datetime
     from sqlmodel import select
+
+    src = (source or '').strip().lower()
+    ext = (external_id or '').strip()
+    if (not src or not ext) and (login or '').strip():
+        src = 'github'
+        ext = (login or '').strip()
+
+    if not src or not ext:
+        return JSONResponse({"ok": False, "error": "missing source/external_id"}, status_code=400)
+
     with get_session() as s:
         p = s.get(Project, project_id)
         if not p:
             return JSONResponse({"ok": False, "error": "project not found"}, status_code=404)
-        pc = s.exec(
-            select(ProjectCandidate).where(ProjectCandidate.project_id == project_id, ProjectCandidate.login == login)
+
+        pe = s.exec(
+            select(ProjectEntity).where(ProjectEntity.project_id == project_id, ProjectEntity.source == src, ProjectEntity.external_id == ext)
         ).first()
-        if pc:
-            s.delete(pc)
+        if pe:
+            s.delete(pe)
+
+        # legacy github
+        if src == 'github':
+            pc = s.exec(
+                select(ProjectCandidate).where(ProjectCandidate.project_id == project_id, ProjectCandidate.login == ext)
+            ).first()
+            if pc:
+                s.delete(pc)
+
         p.updated_at = datetime.utcnow()
         s.add(p)
         s.commit()
+
     return JSONResponse({"ok": True})
 
 
 @app.post("/projects/{project_id:int}/status")
-def projects_set_status(project_id: int, login: str = Form(...), status: str = Form(...)):
-    """Update pipeline status for a candidate in a project."""
+def projects_set_status(
+    project_id: int,
+    login: str = Form(""),
+    source: str = Form(""),
+    external_id: str = Form(""),
+    status: str = Form(...),
+):
+    """Update pipeline status for an entity in a project."""
     from datetime import datetime
     from sqlmodel import select
 
@@ -770,17 +902,37 @@ def projects_set_status(project_id: int, login: str = Form(...), status: str = F
     if status not in ('new', 'contacted', 'pass'):
         return JSONResponse({"ok": False, "error": "invalid status"}, status_code=400)
 
+    src = (source or '').strip().lower()
+    ext = (external_id or '').strip()
+    if (not src or not ext) and (login or '').strip():
+        src = 'github'
+        ext = (login or '').strip()
+
+    if not src or not ext:
+        return JSONResponse({"ok": False, "error": "missing source/external_id"}, status_code=400)
+
     with get_session() as s:
         p = s.get(Project, project_id)
         if not p:
             return JSONResponse({"ok": False, "error": "project not found"}, status_code=404)
-        pc = s.exec(
-            select(ProjectCandidate).where(ProjectCandidate.project_id == project_id, ProjectCandidate.login == login)
+
+        pe = s.exec(
+            select(ProjectEntity).where(ProjectEntity.project_id == project_id, ProjectEntity.source == src, ProjectEntity.external_id == ext)
         ).first()
-        if not pc:
-            return JSONResponse({"ok": False, "error": "candidate not in project"}, status_code=404)
-        pc.status = status
-        s.add(pc)
+        if pe:
+            pe.status = status
+            pe.updated_at = datetime.utcnow()
+            s.add(pe)
+
+        # legacy github
+        if src == 'github':
+            pc = s.exec(
+                select(ProjectCandidate).where(ProjectCandidate.project_id == project_id, ProjectCandidate.login == ext)
+            ).first()
+            if pc:
+                pc.status = status
+                s.add(pc)
+
         p.updated_at = datetime.utcnow()
         s.add(p)
         s.commit()
