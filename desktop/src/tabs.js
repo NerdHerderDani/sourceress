@@ -66,6 +66,26 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
     iframe.addEventListener('load', () => {
       try { record(); } catch (_) {}
       try { wireSameOriginClicks(); } catch (_) {}
+
+      // Safety net: if navigation lands on a /candidates/ page inside a non-profile tab,
+      // open it in a new tab and bounce this tab back to where it was.
+      try {
+        const href = safeHref(iframe);
+        const isProfile = (title || '').toLowerCase().includes('profile');
+        if (!isProfile && href && href.includes('/candidates/')) {
+          // Open profile in a new tab
+          addTab({ title: 'Profile', url: href, pinned: false });
+
+          // Bounce back in this tab if possible
+          if (nav.idx > 0) {
+            nav.idx -= 1;
+            const backHref = nav.stack[nav.idx];
+            nav.suppress = true;
+            iframe.src = backHref;
+            setTimeout(() => { nav.suppress = false; }, 50);
+          }
+        }
+      } catch (_) {}
     });
 
     iframe.src = url;
