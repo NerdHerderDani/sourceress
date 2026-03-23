@@ -7,6 +7,10 @@
     <div class="hint">{{ cand.location }}{% if cand.company %} · {{ cand.company }}{% endif %}</div>
   </div>
   <div>
+    {% if back %}
+      <a href="{{ back }}">← Back</a>
+      &nbsp;|&nbsp;
+    {% endif %}
     <a href="/">New search</a>
   </div>
 </div>
@@ -42,6 +46,15 @@
     <div class="hint" style="margin-top:10px; white-space:pre-wrap;">Warnings: {{ warnings|join('; ') }}</div>
   {% endif %}
 
+  <div class="hint" style="margin-top:10px;">
+    Paste a LinkedIn URL (x-ray result) so you can jump to the profile, then copy/paste the Experience section.
+  </div>
+
+  <div style="display:flex; gap:10px; margin-top: 10px; align-items:center;">
+    <input id="liUrl" placeholder="https://www.linkedin.com/in/..." style="flex:1; min-width: 280px;" />
+    <button type="button" onclick="openLinkedIn()">Open</button>
+  </div>
+
   <form method="post" action="/candidates/{{ cand.login }}/experience/import-paste" style="margin-top: 14px;">
     <textarea name="raw_text" rows="10" placeholder="Paste LinkedIn Experience text here…" style="width:100%;"></textarea>
     <div style="display:flex; gap:10px; margin-top: 10px; align-items:center;">
@@ -52,9 +65,19 @@
       <button type="submit">Import</button>
     </div>
     <div class="hint" style="margin-top:6px;">
-      Tip: You may need to right-click → Copy on LinkedIn. If parsing is messy, paste smaller chunks (one role at a time).
+      Tip: For best results, copy only the Experience section or one role at a time.
     </div>
   </form>
+
+  <script>
+    function openLinkedIn(){
+      const el = document.getElementById('liUrl');
+      const url = (el && el.value || '').trim();
+      if(!url) return;
+      // Use /out handler, but it only allows GitHub today; open directly.
+      window.open(url, '_blank', 'noopener');
+    }
+  </script>
 
   <hr style="border:0; border-top:1px solid var(--border); margin: 16px 0;" />
 

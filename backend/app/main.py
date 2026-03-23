@@ -340,9 +340,11 @@ def candidate_page(request: Request, login: str):
     w = (request.query_params.get('w') or '').strip()
     warnings = [w] if w else []
 
+    back = (request.query_params.get('back') or '').strip()
+
     return templates.TemplateResponse(
         "candidate.html",
-        {"request": request, "cand": cand, "items": items, "stats": stats, "warnings": warnings},
+        {"request": request, "cand": cand, "items": items, "stats": stats, "warnings": warnings, "back": back},
     )
 
 
