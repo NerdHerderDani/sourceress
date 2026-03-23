@@ -225,6 +225,46 @@ def openalex_index(request: Request):
     return templates.TemplateResponse('openalex.html', {'request': request})
 
 
+@app.get('/linkedin', response_class=HTMLResponse)
+def linkedin_index(request: Request, login: str = Query(default='')):
+    lg = (login or '').strip()
+    cand = None
+    prefill = {"name": "", "location": "", "company": "", "linkedin_url": ""}
+
+    if lg:
+        with get_session() as s:
+            cand = s.get(Candidate, lg)
+            if cand:
+                prefill["name"] = (cand.name or '').strip()
+                prefill["location"] = (cand.location or '').strip()
+                prefill["company"] = (cand.company or '').strip()
+                try:
+                    prefill["linkedin_url"] = (cand.profile_json or {}).get('linkedin_url') or ''
+                except Exception:
+                    prefill["linkedin_url"] = ''
+
+    return templates.TemplateResponse('linkedin.html', {"request": request, "cand": cand, "prefill": prefill})
+
+
+@app.post('/candidates/{login}/linkedin-url')
+def candidate_set_linkedin_url(login: str, linkedin_url: str = Form('')):
+    url = (linkedin_url or '').strip()
+    if not url:
+        return JSONResponse({"ok": False, "error": "missing url"}, status_code=400)
+
+    with get_session() as s:
+        cand = s.get(Candidate, login)
+        if not cand:
+            return JSONResponse({"ok": False, "error": "candidate not found"}, status_code=404)
+        pj = cand.profile_json or {}
+        pj['linkedin_url'] = url
+        cand.profile_json = pj
+        s.add(cand)
+        s.commit()
+
+    return JSONResponse({"ok": True})
+
+
 @app.get('/openalex/search')
 async def openalex_search(mode: str = Query(default='authors'), q: str = Query(default='')):
     md = (mode or 'authors').strip().lower()

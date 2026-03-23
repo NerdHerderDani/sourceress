@@ -276,6 +276,7 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
     addTab({ title: 'GitHub', url: b, pinned: false });
     addTab({ title: 'Stack', url: b + 'stack', pinned: false });
     addTab({ title: 'OpenAlex', url: b + 'openalex', pinned: false });
+    addTab({ title: 'LinkedIn', url: b + 'linkedin', pinned: false });
   }
 
   return {

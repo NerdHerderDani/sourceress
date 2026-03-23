@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0">LinkedIn (X‑ray)</h1>
+      <div class="hint">Generate Google X‑ray queries to find LinkedIn profiles. No scraping.</div>
+    </div>
+    <div>
+      <a href="/">GitHub</a>
+      &nbsp;|&nbsp;
+      <a href="/stack">Stack</a>
+      &nbsp;|&nbsp;
+      <a href="/openalex">OpenAlex</a>
+      &nbsp;|&nbsp;
+      <a href="/projects-ui">Projects</a>
+    </div>
+  </div>
+
+  <div class="panel">
+    {% if cand %}
+      <div class="info" style="margin-bottom:12px;">
+        Linked candidate: <strong>{{ cand.login }}</strong>
+        {% if cand.name %} — {{ cand.name }}{% endif %}
+        {% if cand.location %} · {{ cand.location }}{% endif %}
+        {% if cand.company %} · {{ cand.company }}{% endif %}
+      </div>
+    {% endif %}
+
+    <div class="row" style="align-items:flex-start; gap: 14px;">
+      <div style="flex:2;">
+        <div class="hint">Name</div>
+        <input id="nm" value="{{ prefill.name }}" placeholder="e.g. Ada Lovelace" />
+
+        <div class="hint" style="margin-top:10px;">Location (optional)</div>
+        <input id="loc" value="{{ prefill.location }}" placeholder="e.g. San Francisco" />
+
+        <div class="hint" style="margin-top:10px;">Company (optional)</div>
+        <input id="co" value="{{ prefill.company }}" placeholder="e.g. Ava Labs" />
+
+        <div class="hint" style="margin-top:10px;">Keywords (optional)</div>
+        <input id="kw" value="" placeholder="e.g. rust, distributed systems, zk" />
+
+        <div style="display:flex; gap:10px; margin-top: 12px; flex-wrap:wrap;">
+          <button type="button" onclick="openXray()">Open Google X‑ray</button>
+          <button type="button" onclick="copyQuery()">Copy query</button>
+        </div>
+
+        <div class="hint" style="margin-top: 8px;">Query preview</div>
+        <textarea id="q" rows="3" readonly style="width:100%;"></textarea>
+
+        <hr style="border:0; border-top:1px solid var(--border); margin: 16px 0;" />
+
+        <div class="hint">LinkedIn URL (paste the profile you found)</div>
+        <div style="display:flex; gap:10px; align-items:center; margin-top: 6px;">
+          <input id="li" value="{{ prefill.linkedin_url }}" placeholder="https://www.linkedin.com/in/..." />
+          <button type="button" onclick="openLi()">Open</button>
+          {% if cand %}
+            <button type="button" onclick="saveLi()">Save to candidate</button>
+          {% endif %}
+        </div>
+        <div id="saveMsg" class="hint" style="margin-top:6px;"></div>
+      </div>
+
+      <div style="flex:1; min-width: 240px;">
+        <div class="hint">Tips</div>
+        <div class="info">
+          <div>Use exact quotes around names. Add 1–2 keywords to narrow results.</div>
+          <div style="margin-top:8px;">Examples:</div>
+          <ul>
+            <li><code>site:linkedin.com/in \"Jane Doe\" \"Rust\"</code></li>
+            <li><code>site:linkedin.com/in \"Jane Doe\" \"Tokyo\"</code></li>
+            <li><code>site:linkedin.com/in \"Jane Doe\" \"Ava Labs\"</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  function esc(s){ return (s ?? '').toString(); }
+
+  function buildQuery(){
+    const nm = (document.getElementById('nm').value || '').trim();
+    const loc = (document.getElementById('loc').value || '').trim();
+    const co = (document.getElementById('co').value || '').trim();
+    const kw = (document.getElementById('kw').value || '').trim();
+
+    const parts = ['site:linkedin.com/in'];
+    if (nm) parts.push('"' + nm.replaceAll('"','') + '"');
+    if (loc) parts.push('"' + loc.replaceAll('"','') + '"');
+    if (co) parts.push('"' + co.replaceAll('"','') + '"');
+    if (kw) {
+      // allow comma-separated keywords
+      kw.split(',').map(x => x.trim()).filter(Boolean).slice(0,4).forEach(k => parts.push('"' + k.replaceAll('"','') + '"'));
+    }
+    const q = parts.join(' ');
+    document.getElementById('q').value = q;
+    return q;
+  }
+
+  function openXray(){
+    const q = buildQuery();
+    if (!q) return;
+    const url = 'https://www.google.com/search?q=' + encodeURIComponent(q);
+    const tauriInvoke = window.__TAURI__?.core?.invoke;
+    if (typeof tauriInvoke === 'function') {
+      tauriInvoke('open_url', { url }).catch(()=>{});
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  async function copyQuery(){
+    const q = buildQuery();
+    try {
+      await navigator.clipboard.writeText(q);
+      const el = document.getElementById('saveMsg');
+      el.textContent = 'Copied query.';
+      setTimeout(()=>el.textContent='', 900);
+    } catch (_) {}
+  }
+
+  function openLi(){
+    const url = (document.getElementById('li').value || '').trim();
+    if (!url) return;
+    const tauriInvoke = window.__TAURI__?.core?.invoke;
+    if (typeof tauriInvoke === 'function') {
+      tauriInvoke('open_url', { url }).catch(()=>{});
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  async function saveLi(){
+    const url = (document.getElementById('li').value || '').trim();
+    if (!url) return;
+    const msg = document.getElementById('saveMsg');
+    msg.textContent = 'Saving…';
+    const fd = new FormData();
+    fd.append('linkedin_url', url);
+    const res = await fetch('/candidates/{{ cand.login }}/linkedin-url', { method:'POST', body: fd });
+    const data = await res.json().catch(()=>null);
+    if (!res.ok || !data?.ok){
+      msg.textContent = 'Save failed: ' + (data?.error || res.status);
+      return;
+    }
+    msg.textContent = 'Saved to candidate.';
+    setTimeout(()=>msg.textContent='', 1200);
+  }
+
+  // keep preview up to date
+  ['nm','loc','co','kw'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', buildQuery);
+  });
+  buildQuery();
+</script>
+{% endblock %}
