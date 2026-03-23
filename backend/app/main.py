@@ -24,6 +24,7 @@ from .projects import Project, ProjectCandidate
 from .project_entity import ProjectEntity
 from .models import SearchRun, Candidate
 from .company_signals import Company, CompanySignal, upsert_company, norm_company_name
+from .gdelt_client import fetch_doc_list
 from .experience import CandidateExperience, parse_linkedin_experience_paste, compute_experience_stats, fmt_months
 from .auth import get_bearer_token, verify_supabase_jwt, email_allowed
 from .secrets_store import set_github_token, get_github_token
@@ -272,10 +273,19 @@ def companies_add(name: str = Form('')):
 
 @app.get('/companies/{company_id:int}', response_class=HTMLResponse)
 def company_detail(request: Request, company_id: int):
+    from sqlmodel import select
+
     with get_session() as s:
         c = s.get(Company, company_id)
         if not c:
             return HTMLResponse('company not found', status_code=404)
+
+        # Load latest cached signals (if any)
+        sigs = s.exec(
+            select(CompanySignal)
+            .where(CompanySignal.company_id == company_id)
+            .order_by(CompanySignal.created_at.desc())
+        ).all()
 
     q = c.name
     google_url = f"https://www.google.com/search?q={q}"
@@ -300,6 +310,25 @@ def company_detail(request: Request, company_id: int):
     except Exception:
         comp_rows = []
 
+    # Extract latest by type
+    layoffs = {'count': 0, 'articles': [], 'query': ''}
+    funding = {'count': 0, 'articles': [], 'query': ''}
+    for s in sigs:
+        if s.signal_type == 'layoffs' and not layoffs.get('query'):
+            v = s.value_json or {}
+            layoffs = {
+                'count': v.get('count', 0) or 0,
+                'articles': v.get('articles', []) or [],
+                'query': v.get('query', '') or '',
+            }
+        if s.signal_type == 'funding' and not funding.get('query'):
+            v = s.value_json or {}
+            funding = {
+                'count': v.get('count', 0) or 0,
+                'articles': v.get('articles', []) or [],
+                'query': v.get('query', '') or '',
+            }
+
     return templates.TemplateResponse('company_detail.html', {
         'request': request,
         'c': c,
@@ -308,6 +337,8 @@ def company_detail(request: Request, company_id: int):
         'levels_url': levels_url,
         'crunch_url': crunch_url,
         'comp_rows': comp_rows,
+        'layoffs': layoffs,
+        'funding': funding,
     })
 
 
@@ -316,6 +347,74 @@ def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''),
     rl = (role or '').strip()
     if not rl:
         return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.post('/companies/{company_id:int}/signals/refresh')
+def company_refresh_signals(company_id: int):
+    """Fetch and cache simple news-derived signals from free sources (GDELT).
+
+    MVP heuristics:
+    - Layoffs: company name + layoff-ish keywords
+    - Funding: company name + funding-ish keywords
+    """
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+
+        nm = (c.name or '').strip()
+        # Quote the company name to reduce noise.
+        layoffs_q = f'"{nm}" (layoff OR layoffs OR "reduction in force" OR RIF OR furlough)'
+        funding_q = f'"{nm}" ("raised" OR funding OR "seed round" OR "Series A" OR "Series B" OR "Series C" OR "led by")'
+
+        try:
+            layoffs = fetch_doc_list(layoffs_q, days=90, limit=8)
+        except Exception as e:
+            layoffs = None
+            err = str(e)
+        else:
+            err = ''
+
+        try:
+            funding = fetch_doc_list(funding_q, days=90, limit=8)
+        except Exception as e:
+            funding = None
+            err = (err + ' | ' if err else '') + str(e)
+
+        if layoffs:
+            s.add(CompanySignal(
+                company_id=company_id,
+                source='gdelt',
+                signal_type='layoffs',
+                url='https://api.gdeltproject.org/api/v2/doc/doc',
+                value_json={
+                    'count': layoffs.count,
+                    'articles': layoffs.articles,
+                    'query': layoffs.query,
+                    'start': layoffs.start,
+                    'end': layoffs.end,
+                },
+            ))
+        if funding:
+            s.add(CompanySignal(
+                company_id=company_id,
+                source='gdelt',
+                signal_type='funding',
+                url='https://api.gdeltproject.org/api/v2/doc/doc',
+                value_json={
+                    'count': funding.count,
+                    'articles': funding.articles,
+                    'query': funding.query,
+                    'start': funding.start,
+                    'end': funding.end,
+                },
+            ))
+        s.commit()
+
+    if err:
+        return RedirectResponse(url=f'/companies/{company_id}?msg=' + __import__('urllib.parse').parse.quote(err), status_code=303)
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
 
     def _to_int(x: str):
         x = (x or '').strip().replace(',', '')

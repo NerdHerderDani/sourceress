@@ -77,8 +77,49 @@
   </div>
 
   <div class="card" style="margin-top: 14px; display:block;">
-    <h2 style="margin:0">Signals (coming next)</h2>
-    <div class="hint" style="margin-top: 6px;">Next: wire in free sources like GDELT (news spikes) + Wikidata industry tags.</div>
+    <div style="display:flex; justify-content:space-between; gap: 12px; align-items:baseline;">
+      <h2 style="margin:0">Signals</h2>
+      <form method="post" action="/companies/{{ c.id }}/signals/refresh">
+        <button type="submit">Refresh (GDELT)</button>
+      </form>
+    </div>
+
+    <div class="hint" style="margin-top: 6px;">MVP: GDELT DOC API (news-derived). Not perfect, but fast.</div>
+
+    <div style="display:flex; gap: 12px; flex-wrap:wrap; margin-top: 10px;">
+      <div class="badge"><strong>Layoffs (90d)</strong> {{ layoffs.count }}</div>
+      <div class="badge"><strong>Funding (90d)</strong> {{ funding.count }}</div>
+    </div>
+
+    <div style="display:flex; gap: 14px; flex-wrap:wrap; margin-top: 12px;">
+      <div style="flex:1; min-width: 280px;">
+        <div class="hint" style="margin-bottom:6px;">Layoffs articles</div>
+        {% if layoffs.articles and layoffs.articles|length %}
+          <ul style="margin:0 0 0 18px;">
+            {% for a in layoffs.articles %}
+              <li><a class="extLink" href="#" onclick="openUrl('{{ a.url }}'); return false;">{{ a.title or a.url }}</a></li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="hint">None found.</div>
+        {% endif %}
+      </div>
+
+      <div style="flex:1; min-width: 280px;">
+        <div class="hint" style="margin-bottom:6px;">Funding articles</div>
+        {% if funding.articles and funding.articles|length %}
+          <ul style="margin:0 0 0 18px;">
+            {% for a in funding.articles %}
+              <li><a class="extLink" href="#" onclick="openUrl('{{ a.url }}'); return false;">{{ a.title or a.url }}</a></li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="hint">None found.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="hint" style="margin-top:10px;">Queries: <code>{{ layoffs.query }}</code> · <code>{{ funding.query }}</code></div>
   </div>
 </div>
 {% endblock %}
