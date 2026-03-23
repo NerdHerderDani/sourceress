@@ -25,6 +25,7 @@ from .project_entity import ProjectEntity
 from .models import SearchRun, Candidate
 from .company_signals import Company, CompanySignal, upsert_company, norm_company_name
 from .gdelt_client import fetch_doc_list
+from .wikidata_client import enrich_company_by_name, fetch_company, search_company_qid
 from .experience import CandidateExperience, parse_linkedin_experience_paste, compute_experience_stats, fmt_months
 from .auth import get_bearer_token, verify_supabase_jwt, email_allowed
 from .secrets_store import set_github_token, get_github_token
@@ -347,6 +348,48 @@ def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''),
     rl = (role or '').strip()
     if not rl:
         return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.post('/companies/{company_id:int}/wikidata/refresh')
+def company_refresh_wikidata(company_id: int):
+    """Enrich company with free Wikidata: industries + website domain.
+
+    MVP: pick top wbsearchentities hit. Later: allow user to choose.
+    """
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+
+        # If already linked, refresh from that QID; else search by name.
+        wd = None
+        err = ''
+        try:
+            if (c.wikidata_id or '').strip():
+                wd = fetch_company(c.wikidata_id)
+            else:
+                wd = enrich_company_by_name(c.name)
+        except Exception as e:
+            wd = None
+            err = str(e)
+
+        if wd:
+            c.wikidata_id = wd.qid
+            c.industry_tags = wd.industry_labels or []
+            # merge domains (keep existing)
+            doms = set([d for d in (c.domains or []) if isinstance(d, str) and d])
+            for d in (wd.domains or []):
+                if d:
+                    doms.add(d)
+            c.domains = sorted(doms)
+            c.updated_at = __import__('datetime').datetime.utcnow()
+            s.add(c)
+            s.commit()
+
+    if err:
+        return RedirectResponse(url=f'/companies/{company_id}?msg=' + __import__('urllib.parse').parse.quote(err), status_code=303)
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
 
 
 @app.post('/companies/{company_id:int}/signals/refresh')

@@ -18,6 +18,14 @@
     <button type="button" onclick="openUrl('{{ layoffs_url }}')">layoffs.fyi</button>
     <button type="button" onclick="openUrl('{{ levels_url }}')">Levels.fyi</button>
     <button type="button" onclick="openUrl('{{ crunch_url }}')">Crunchbase</button>
+    <form method="post" action="/companies/{{ c.id }}/wikidata/refresh" style="margin:0;">
+      <button type="submit">Refresh (Wikidata)</button>
+    </form>
+  </div>
+
+  <div class="hint" style="margin-top: 10px;">Wikidata: {% if c.wikidata_id %}<code>{{ c.wikidata_id }}</code>{% else %}<span class="hint">not linked</span>{% endif %}
+    {% if c.industry_tags and c.industry_tags|length %} · industries: {{ c.industry_tags|join(', ') }}{% endif %}
+    {% if c.domains and c.domains|length %} · domains: {{ c.domains|join(', ') }}{% endif %}
   </div>
 
   <script>

@@ -43,6 +43,7 @@ class Company(SQLModel, table=True):
     origin: str = Field(default='manual', index=True)
 
     # Optional enrichment
+    wikidata_id: str = Field(default='', index=True)
     industry_tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     domains: list[str] = Field(default_factory=list, sa_column=Column(JSON))
 
