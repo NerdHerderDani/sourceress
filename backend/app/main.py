@@ -788,7 +788,7 @@ def projects_get(project_id: int):
                 "summary": {"login": c.login, "location": c.location, "company": c.company, "followers": c.followers},
             })
 
-        return JSONResponse({"ok": True, "project": p.model_dump(), "items": items})
+        return JSONResponse(jsonable_encoder({"ok": True, "project": p.model_dump(), "items": items}))
 
     except Exception as e:
         return JSONResponse({"ok": False, "error": f"projects_get failed: {type(e).__name__}: {e}"}, status_code=500)
