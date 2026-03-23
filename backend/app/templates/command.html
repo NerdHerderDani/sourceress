@@ -98,6 +98,50 @@
   <div class="panel" style="margin-top: 14px;">
     <div style="display:flex; justify-content: space-between; align-items: baseline; gap: 12px;">
       <div>
+        <div style="font-weight:900;">Competitive landscape</div>
+        <div class="hint">Benchmark comp vs baseline (Ava Labs). Stack/skills overlap scoring comes next.</div>
+      </div>
+      <div class="pill">demo</div>
+    </div>
+
+    {% if baseline %}
+      <div class="info" style="margin-top: 10px;">
+        Baseline detected: <strong>{{ baseline.name }}</strong> — import comp rows for multiple roles (SWE/PM/DS) in Talent Mapping.
+      </div>
+    {% else %}
+      <div class="danger" style="margin-top: 10px;">No baseline company found (name contains "ava"). Add Ava Labs to Talent Mapping first.</div>
+    {% endif %}
+
+    <div style="margin-top: 12px; display:flex; flex-direction:column; gap: 10px;">
+      {% for r in table %}
+        <div class="card" style="margin:0; display:block;">
+          <div style="display:flex; justify-content:space-between; gap:12px; align-items:baseline;">
+            <div>
+              <div style="font-weight:900;">{{ r.name }}</div>
+              <div class="hint">
+                {% if r.github_org_url %}<a class="pill" href="#" onclick="openUrl('{{ r.github_org_url }}'); return false;">GitHub</a>{% endif %}
+                {% if r.linkedin_company_url %}<a class="pill" href="#" onclick="openUrl('{{ r.linkedin_company_url }}'); return false;">LinkedIn</a>{% endif %}
+                {% if r.jobs_url %}<a class="pill" href="#" onclick="openUrl('{{ r.jobs_url }}'); return false;">Jobs</a>{% endif %}
+              </div>
+            </div>
+            <div class="badges">
+              {% for fam, d in r.deltas.items() %}
+                <span class="badge"><strong>{{ fam }}</strong> Δmid {{ d.mid_delta }} {% if d.flag %}<span class="pill">{{ d.flag }}</span>{% endif %}</span>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+
+      {% if not table or table|length == 0 %}
+        <div class="hint">No comp rows found yet. Add comp bands for Ava Labs + a few competitors to see benchmarking.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top: 14px;">
+    <div style="display:flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+      <div>
         <div style="font-weight:900;">Demo flows</div>
         <div class="hint">3 click paths that show value fast.</div>
       </div>
@@ -111,8 +155,20 @@
         <strong>Flow B:</strong> Projects → create project → add GitHub + Stack entities → change status → unified pipeline list.
       </div>
       <div class="info">
-        <strong>Flow C:</strong> Companies → add watchlist → fill comp bands via level grid → refresh signals (GDELT) → SEC filings (public).
+        <strong>Flow C:</strong> Talent Mapping → add watchlist → fill comp bands via level grid → refresh signals (GDELT) → SEC filings (public).
       </div>
     </div>
   </div>
+
+  <script>
+    function openUrl(url){
+      if(!url) return;
+      const tauriInvoke = window.__TAURI__?.core?.invoke;
+      if (typeof tauriInvoke === 'function') {
+        tauriInvoke('open_url', { url }).catch(()=>{});
+        return;
+      }
+      window.open(url, '_blank', 'noopener');
+    }
+  </script>
 {% endblock %}

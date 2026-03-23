@@ -27,6 +27,38 @@
     {% endif %}
   </div>
 
+  <div class="card" style="margin-top: 12px; display:block;">
+    <div style="display:flex; justify-content:space-between; gap: 12px; align-items:baseline;">
+      <div>
+        <h2>Company links</h2>
+        <div class="hint">Attach the GitHub org, LinkedIn company page, and job board for one-click demo navigation.</div>
+      </div>
+      <span class="pill">demo</span>
+    </div>
+
+    <form method="post" action="/companies/{{ c.id }}/links" style="margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+      <div style="flex:1; min-width:260px;">
+        <div class="hint">GitHub org URL</div>
+        <input name="github_org_url" value="{{ c.github_org_url }}" placeholder="https://github.com/ava-labs" />
+      </div>
+      <div style="flex:1; min-width:260px;">
+        <div class="hint">LinkedIn company URL</div>
+        <input name="linkedin_company_url" value="{{ c.linkedin_company_url }}" placeholder="https://www.linkedin.com/company/ava-labs/" />
+      </div>
+      <div style="flex:1; min-width:260px;">
+        <div class="hint">Jobs URL</div>
+        <input name="jobs_url" value="{{ c.jobs_url }}" placeholder="https://www.avalabs.org/careers" />
+      </div>
+      <button type="submit">Save</button>
+    </form>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top: 10px;">
+      {% if c.github_org_url %}<button type="button" onclick="openUrl('{{ c.github_org_url }}')">Open GitHub</button>{% endif %}
+      {% if c.linkedin_company_url %}<button type="button" onclick="openUrl('{{ c.linkedin_company_url }}')">Open LinkedIn</button>{% endif %}
+      {% if c.jobs_url %}<button type="button" onclick="openUrl('{{ c.jobs_url }}')">Open Jobs</button>{% endif %}
+    </div>
+  </div>
+
   <div class="hint" style="margin-top: 10px;">Wikidata: {% if c.wikidata_id %}<code>{{ c.wikidata_id }}</code>{% else %}<span class="hint">not linked</span>{% endif %}
     {% if c.industry_tags and c.industry_tags|length %} · industries: {{ c.industry_tags|join(', ') }}{% endif %}
     {% if c.domains and c.domains|length %} · domains: {{ c.domains|join(', ') }}{% endif %}

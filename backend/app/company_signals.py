@@ -48,6 +48,11 @@ class Company(SQLModel, table=True):
     industry_tags: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     domains: list[str] = Field(default_factory=list, sa_column=Column(JSON))
 
+    # Demo/practical links
+    github_org_url: str = Field(default='')
+    linkedin_company_url: str = Field(default='')
+    jobs_url: str = Field(default='')
+
     notes: str = Field(default='')
 
     # Manual compensation notes/bands

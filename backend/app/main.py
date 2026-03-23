@@ -25,6 +25,7 @@ from .project_entity import ProjectEntity
 from .models import SearchRun, Candidate
 from .company_signals import Company, CompanySignal, upsert_company, norm_company_name
 from .comp_bands import CompanyCompBand
+from .posted_ranges import CompanyPostedRange
 from .gdelt_client import fetch_doc_list
 from .wikidata_client import enrich_company_by_name, fetch_company, search_company_qid
 from .sec_edgar_client import fetch_company_submissions, norm_cik
@@ -232,7 +233,101 @@ def openalex_index(request: Request):
 
 @app.get('/command', response_class=HTMLResponse)
 def command_center(request: Request):
-    return templates.TemplateResponse('command.html', {'request': request})
+    """Demo hub.
+
+    MVP benchmarking: compare other companies' comp bands to Ava Labs baseline.
+    """
+    from sqlmodel import select
+
+    def family(role: str) -> str:
+        r = (role or '').lower()
+        if 'product' in r or r.startswith('pm'):
+            return 'PM'
+        if 'data' in r or 'scientist' in r or 'ml' in r:
+            return 'DS'
+        if 'engineer' in r or 'developer' in r or 'software' in r:
+            return 'SWE'
+        return 'Other'
+
+    def med(vals: list[int]) -> int:
+        vals = sorted([int(v) for v in vals if v is not None and int(v) > 0])
+        if not vals:
+            return 0
+        n = len(vals)
+        m = n // 2
+        if n % 2 == 1:
+            return vals[m]
+        return int((vals[m-1] + vals[m]) / 2)
+
+    with get_session() as s:
+        companies = s.exec(select(Company).order_by(Company.name.asc())).all()
+        comp_rows = s.exec(select(CompanyCompBand)).all()
+
+    # baseline: first company with 'ava' in name
+    baseline = None
+    for c in companies:
+        if 'ava' in (c.norm_name or ''):
+            baseline = c
+            break
+
+    # aggregates per company per family
+    by_co: dict[int, dict[str, dict[str, int]]] = {}
+    counts: dict[int, int] = {}
+    for r in comp_rows:
+        fid = family(r.role)
+        d = by_co.setdefault(r.company_id, {}).setdefault(fid, {'low': 0, 'mid': 0, 'high': 0, 'bonus': 0, 'equity': 0, 'n': 0})
+        # store lists via temp fields
+        for k, v in [('low', r.low), ('mid', r.mid), ('high', r.high), ('bonus', getattr(r, 'bonus', 0)), ('equity', getattr(r, 'equity', 0))]:
+            if v and int(v) > 0:
+                d.setdefault('_' + k, []).append(int(v))
+        d['n'] += 1
+        counts[r.company_id] = counts.get(r.company_id, 0) + 1
+
+    # finalize medians
+    for cid, fams in by_co.items():
+        for fid, d in fams.items():
+            for k in ('low', 'mid', 'high', 'bonus', 'equity'):
+                d[k] = med(d.get('_' + k, []))
+                if '_' + k in d:
+                    del d['_' + k]
+
+    base_aggs = by_co.get(baseline.id, {}) if baseline else {}
+
+    table = []
+    for c in companies:
+        if counts.get(c.id, 0) <= 0:
+            continue
+        row = {
+            'id': c.id,
+            'name': c.name,
+            'jobs_url': c.jobs_url,
+            'github_org_url': c.github_org_url,
+            'linkedin_company_url': c.linkedin_company_url,
+            'aggs': by_co.get(c.id, {}),
+            'deltas': {},
+        }
+        # delta vs baseline for each family
+        for fid in ('SWE', 'PM', 'DS'):
+            a = row['aggs'].get(fid, {})
+            b = base_aggs.get(fid, {})
+            if not a or not b:
+                continue
+            dm = (a.get('mid', 0) or 0) - (b.get('mid', 0) or 0)
+            flag = ''
+            if b.get('mid', 0) and a.get('mid', 0):
+                ratio = a['mid'] / b['mid']
+                if ratio < 0.85:
+                    flag = 'UNDER_AVA'
+                elif ratio > 1.15:
+                    flag = 'OVER_AVA'
+            row['deltas'][fid] = {'mid_delta': dm, 'flag': flag}
+        table.append(row)
+
+    return templates.TemplateResponse('command.html', {
+        'request': request,
+        'baseline': baseline,
+        'table': table,
+    })
 
 
 @app.get('/companies', response_class=HTMLResponse)
@@ -427,6 +522,22 @@ def company_detail(request: Request, company_id: int):
 @app.post('/companies/{company_id:int}/comp')
 def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''), mid: str = Form(''), high: str = Form(''), notes: str = Form('')):
     # Legacy endpoint (kept for compatibility). Prefer /comp/add + table.
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.post('/companies/{company_id:int}/links')
+def company_links_save(company_id: int, github_org_url: str = Form(''), linkedin_company_url: str = Form(''), jobs_url: str = Form('')):
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+        c.github_org_url = (github_org_url or '').strip()
+        c.linkedin_company_url = (linkedin_company_url or '').strip()
+        c.jobs_url = (jobs_url or '').strip()
+        c.updated_at = __import__('datetime').datetime.utcnow()
+        s.add(c)
+        s.commit()
+
     return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
 
 
