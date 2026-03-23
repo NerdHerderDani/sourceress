@@ -297,6 +297,9 @@ def command_center(request: Request):
     for c in companies:
         if counts.get(c.id, 0) <= 0:
             continue
+        if baseline and c.id == baseline.id:
+            # Don't benchmark Ava against itself
+            continue
         row = {
             'id': c.id,
             'name': c.name,

@@ -107,6 +107,7 @@
     {% if baseline %}
       <div class="info" style="margin-top: 10px;">
         Baseline detected: <strong>{{ baseline.name }}</strong> — import comp rows for multiple roles (SWE/PM/DS) in Talent Mapping.
+        <span class="hint">(Baseline company is excluded from the benchmark list.)</span>
       </div>
     {% else %}
       <div class="danger" style="margin-top: 10px;">No baseline company found (name contains "ava"). Add Ava Labs to Talent Mapping first.</div>
@@ -126,7 +127,7 @@
             </div>
             <div class="badges">
               {% for fam, d in r.deltas.items() %}
-                <span class="badge"><strong>{{ fam }}</strong> Δmid {{ d.mid_delta }} {% if d.flag %}<span class="pill">{{ d.flag }}</span>{% endif %}</span>
+                <span class="badge"><strong>{{ fam }}</strong> Δmid {% if d.mid_delta > 0 %}+{% endif %}{{ d.mid_delta }}{% if d.flag %} <span class="pill">{{ d.flag }}</span>{% endif %}</span>
               {% endfor %}
             </div>
           </div>
