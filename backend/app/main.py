@@ -27,6 +27,7 @@ from .company_signals import Company, CompanySignal, upsert_company, norm_compan
 from .comp_bands import CompanyCompBand
 from .gdelt_client import fetch_doc_list
 from .wikidata_client import enrich_company_by_name, fetch_company, search_company_qid
+from .sec_edgar_client import fetch_company_submissions, norm_cik
 from .experience import CandidateExperience, parse_linkedin_experience_paste, compute_experience_stats, fmt_months
 from .auth import get_bearer_token, verify_supabase_jwt, email_allowed
 from .secrets_store import set_github_token, get_github_token
@@ -670,6 +671,78 @@ def company_refresh_wikidata(company_id: int):
 
     if err:
         return RedirectResponse(url=f'/companies/{company_id}?msg=' + __import__('urllib.parse').parse.quote(err), status_code=303)
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.post('/companies/{company_id:int}/sec/set')
+def company_sec_set(company_id: int, sec_cik: str = Form('')):
+    cik10 = norm_cik(sec_cik)
+    if not cik10:
+        return RedirectResponse(url=f'/companies/{company_id}?msg=Invalid+CIK', status_code=303)
+
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+        c.sec_cik = cik10
+        c.updated_at = __import__('datetime').datetime.utcnow()
+        s.add(c)
+        s.commit()
+
+    return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.post('/companies/{company_id:int}/sec/refresh')
+def company_sec_refresh(company_id: int):
+    """Cache recent SEC filings for a company (public companies only)."""
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return HTMLResponse('company not found', status_code=404)
+        cik = (c.sec_cik or '').strip()
+
+    if not cik:
+        return RedirectResponse(url=f'/companies/{company_id}?msg=Set+CIK+first', status_code=303)
+
+    try:
+        sub = fetch_company_submissions(cik)
+    except Exception as e:
+        return RedirectResponse(url=f'/companies/{company_id}?msg=' + __import__('urllib.parse').parse.quote(str(e)), status_code=303)
+
+    if not sub:
+        return RedirectResponse(url=f'/companies/{company_id}?msg=No+SEC+data', status_code=303)
+
+    # Simple metrics
+    recent = sub.recent or []
+    forms = [r.get('form') for r in recent if isinstance(r, dict)]
+    def _count(prefix: str) -> int:
+        return sum(1 for f in forms if isinstance(f, str) and f.strip().upper().startswith(prefix))
+
+    metrics = {
+        'name': sub.name,
+        'tickers': sub.tickers,
+        'sic': sub.sic,
+        'sic_description': sub.sic_description,
+        'state': sub.state,
+        'counts': {
+            '10-K': _count('10-K'),
+            '10-Q': _count('10-Q'),
+            '8-K': _count('8-K'),
+            'S-1': _count('S-1'),
+        },
+        'recent': recent[:10],
+    }
+
+    with get_session() as s:
+        s.add(CompanySignal(
+            company_id=company_id,
+            source='sec',
+            signal_type='sec_filings',
+            url=f'https://data.sec.gov/submissions/CIK{cik}.json',
+            value_json=metrics,
+        ))
+        s.commit()
 
     return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
 

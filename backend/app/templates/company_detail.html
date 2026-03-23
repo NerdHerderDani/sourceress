@@ -30,6 +30,23 @@
   <div class="hint" style="margin-top: 10px;">Wikidata: {% if c.wikidata_id %}<code>{{ c.wikidata_id }}</code>{% else %}<span class="hint">not linked</span>{% endif %}
     {% if c.industry_tags and c.industry_tags|length %} · industries: {{ c.industry_tags|join(', ') }}{% endif %}
     {% if c.domains and c.domains|length %} · domains: {{ c.domains|join(', ') }}{% endif %}
+    · SEC CIK: {% if c.sec_cik %}<code>{{ c.sec_cik }}</code>{% else %}<span class="hint">not set</span>{% endif %}
+  </div>
+
+  <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top: 10px;">
+    <form method="post" action="/companies/{{ c.id }}/sec/set" style="margin:0; display:flex; gap:10px; align-items:flex-end;">
+      <div>
+        <div class="hint">Set SEC CIK (public co only)</div>
+        <input name="sec_cik" placeholder="0001652044" value="" style="width:180px;" />
+      </div>
+      <button type="submit">Save CIK</button>
+    </form>
+
+    {% if c.sec_cik %}
+      <form method="post" action="/companies/{{ c.id }}/sec/refresh" style="margin:0;">
+        <button type="submit">Refresh (SEC filings)</button>
+      </form>
+    {% endif %}
   </div>
 
   <script>
