@@ -36,7 +36,12 @@
             </div>
             <div class="hint">origin: {{ c.origin }}{% if c.industry_tags and c.industry_tags|length %} · {{ c.industry_tags|join(', ') }}{% endif %}</div>
           </div>
-          <div class="badge"><strong>Candidates</strong> {{ c.candidate_count }}</div>
+          <div style="display:flex; gap: 10px; align-items:center;">
+            <div class="badge"><strong>Candidates</strong> {{ c.candidate_count }}</div>
+            <form method="post" action="/companies/{{ c.id }}/delete" onsubmit="return confirm('Delete company from watchlist? This will remove stored signals/comp notes.');" style="margin:0;">
+              <button type="submit">Delete</button>
+            </form>
+          </div>
         </div>
       </div>
     {% endfor %}

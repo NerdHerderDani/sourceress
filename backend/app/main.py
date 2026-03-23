@@ -272,6 +272,31 @@ def companies_add(name: str = Form('')):
     return RedirectResponse(url=f'/companies/{c.id}', status_code=303)
 
 
+@app.post('/companies/{company_id:int}/delete')
+def company_delete(company_id: int):
+    """Delete a company record.
+
+    NOTE: This does NOT delete Candidate rows; it only removes the watchlist company.
+    Signals are deleted as well.
+    """
+    from sqlmodel import select
+
+    with get_session() as s:
+        c = s.get(Company, company_id)
+        if not c:
+            return RedirectResponse(url='/companies?msg=Company+not+found', status_code=303)
+
+        # delete signals
+        sigs = s.exec(select(CompanySignal).where(CompanySignal.company_id == company_id)).all()
+        for r in sigs:
+            s.delete(r)
+
+        s.delete(c)
+        s.commit()
+
+    return RedirectResponse(url='/companies?msg=Deleted', status_code=303)
+
+
 @app.get('/companies/{company_id:int}', response_class=HTMLResponse)
 def company_detail(request: Request, company_id: int):
     from sqlmodel import select
