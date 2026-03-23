@@ -108,36 +108,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btnStart").addEventListener("click", start);
   $("btnStop").addEventListener("click", stop);
 
-  // Nav controls (act on embedded app)
-  $("btnBack").addEventListener("click", () => {
-    try { els.tabs?.navBack(); } catch (_) {}
-  });
-  $("btnForward").addEventListener("click", () => {
-    try { els.tabs?.navForward(); } catch (_) {}
-  });
-  $("btnReload").addEventListener("click", () => {
-    try { els.tabs?.navReload(); } catch (_) {}
-  });
-
-  $("btnCopyUrl").addEventListener("click", async () => {
-    const fallback = (els.tabs?.getActiveUrl?.() || '').trim();
-
-    // Try to ask the embedded page for its real location (cross-origin safe via postMessage).
-    let url = '';
-    try {
-      url = await els.tabs?.requestActiveUrl?.(1200);
-    } catch (_) {}
-
-    url = (url || fallback || '').trim();
-    if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      $("btnCopyUrl").textContent = 'Copied';
-      setTimeout(() => $("btnCopyUrl").textContent = '⧉', 800);
-    } catch (_) {
-      // ignore
-    }
-  });
+  // Nav controls removed (keep topbar clean; navigation happens inside the app UI)
 
   $("btnSettings").addEventListener("click", async () => {
     els.panelSettings.style.display = els.panelSettings.style.display === "none" ? "block" : "none";

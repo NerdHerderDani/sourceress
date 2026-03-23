@@ -252,7 +252,8 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
     const plus = document.createElement('button');
     plus.className = 'tab';
     plus.type = 'button';
-    plus.textContent = '+ New Search';
+    plus.textContent = '+ New';
+    // Defaults to GitHub search, but inside the app you can jump to Stack/OpenAlex/etc.
     plus.addEventListener('click', () => addTab({ title: 'Search', url: currentBaseUrl() }));
     containerTabbar.appendChild(plus);
   }
@@ -271,15 +272,11 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
     // normalize trailing slash
     const b = (baseUrl || '').endsWith('/') ? baseUrl : (baseUrl + '/');
     setBaseUrl(b);
-    // Command pinned tab
+
+    // Keep the tabbar clean: only the three core tabs.
     addTab({ title: 'Command', url: b + 'command', pinned: true });
-    // Core tools
     addTab({ title: 'Projects', url: b + 'projects-ui', pinned: false });
     addTab({ title: 'Talent Mapping', url: b + 'companies', pinned: false });
-    addTab({ title: 'GitHub', url: b, pinned: false });
-    addTab({ title: 'Stack', url: b + 'stack', pinned: false });
-    addTab({ title: 'OpenAlex', url: b + 'openalex', pinned: false });
-    addTab({ title: 'LinkedIn', url: b + 'linkedin', pinned: false });
   }
 
   return {
