@@ -271,8 +271,10 @@ export function createTabs({ openerInvoke, containerTabbar, containerViews }) {
     // normalize trailing slash
     const b = (baseUrl || '').endsWith('/') ? baseUrl : (baseUrl + '/');
     setBaseUrl(b);
-    // Projects pinned tab
-    addTab({ title: 'Projects', url: b + 'projects-ui', pinned: true });
+    // Command pinned tab
+    addTab({ title: 'Command', url: b + 'command', pinned: true });
+    // Core tools
+    addTab({ title: 'Projects', url: b + 'projects-ui', pinned: false });
     addTab({ title: 'Companies', url: b + 'companies', pinned: false });
     addTab({ title: 'GitHub', url: b, pinned: false });
     addTab({ title: 'Stack', url: b + 'stack', pinned: false });

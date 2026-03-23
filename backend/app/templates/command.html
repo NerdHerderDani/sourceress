@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0; font-family: 'Flynn', system-ui, sans-serif; font-weight: 700;">Command Center</h1>
+      <div class="hint">All things sourcing. Demo-first. Ops dashboard vibes.</div>
+    </div>
+    <div class="pill">local MVP</div>
+  </div>
+
+  <div class="panel" style="padding: 14px;">
+    <div class="row" style="gap: 14px; flex-wrap:wrap;">
+      <div style="flex: 1; min-width: 220px;">
+        <div class="card" style="margin:0; display:block;">
+          <div style="font-weight:900; font-size: 1.05rem;">Search</div>
+          <div class="hint" style="margin-top: 4px;">GitHub sourcing (query builder + scoring)</div>
+          <div class="cardActions">
+            <a class="pill" href="/">Open</a>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 220px;">
+        <div class="card" style="margin:0; display:block;">
+          <div style="font-weight:900; font-size: 1.05rem;">Projects</div>
+          <div class="hint" style="margin-top: 4px;">Pipeline + unified entities</div>
+          <div class="cardActions">
+            <a class="pill" href="/projects-ui">Open</a>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 220px;">
+        <div class="card" style="margin:0; display:block;">
+          <div style="font-weight:900; font-size: 1.05rem;">Companies</div>
+          <div class="hint" style="margin-top: 4px;">Signals + comp bands + watchlist</div>
+          <div class="cardActions">
+            <a class="pill" href="/companies">Open</a>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 220px;">
+        <div class="card" style="margin:0; display:block;">
+          <div style="font-weight:900; font-size: 1.05rem;">LinkedIn</div>
+          <div class="hint" style="margin-top: 4px;">X‑ray search + save URL</div>
+          <div class="cardActions">
+            <a class="pill" href="/linkedin">Open</a>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 220px;">
+        <div class="card" style="margin:0; display:block;">
+          <div style="font-weight:900; font-size: 1.05rem;">Stack</div>
+          <div class="hint" style="margin-top: 4px;">StackOverflow sourcing</div>
+          <div class="cardActions">
+            <a class="pill" href="/stack">Open</a>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 220px;">
+        <div class="card" style="margin:0; display:block;">
+          <div style="font-weight:900; font-size: 1.05rem;">OpenAlex</div>
+          <div class="hint" style="margin-top: 4px;">Research/author graph</div>
+          <div class="cardActions">
+            <a class="pill" href="/openalex">Open</a>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 220px;">
+        <div class="card" style="margin:0; display:block; border-color: color-mix(in srgb, var(--accent) 35%, var(--border));">
+          <div style="font-weight:900; font-size: 1.05rem;">Settings</div>
+          <div class="hint" style="margin-top: 4px;">Auth + tokens</div>
+          <div class="cardActions">
+            <a class="pill" href="/settings">Open</a>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 1; min-width: 220px;">
+        <div class="card" style="margin:0; display:block; opacity:0.65;">
+          <div style="font-weight:900; font-size: 1.05rem;">Ashby</div>
+          <div class="hint" style="margin-top: 4px;">Coming soon (integration slot)</div>
+          <div class="cardActions">
+            <span class="pill">locked</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top: 14px;">
+    <div style="display:flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+      <div>
+        <div style="font-weight:900;">Demo flows</div>
+        <div class="hint">3 click paths that show value fast.</div>
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap: 10px; margin-top: 10px;">
+      <div class="info">
+        <strong>Flow A:</strong> Search → open candidate → LinkedIn X‑ray → paste Experience → see company comp snapshot.
+      </div>
+      <div class="info">
+        <strong>Flow B:</strong> Projects → create project → add GitHub + Stack entities → change status → unified pipeline list.
+      </div>
+      <div class="info">
+        <strong>Flow C:</strong> Companies → add watchlist → fill comp bands via level grid → refresh signals (GDELT) → SEC filings (public).
+      </div>
+    </div>
+  </div>
+{% endblock %}

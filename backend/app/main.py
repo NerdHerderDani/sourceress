@@ -230,6 +230,11 @@ def openalex_index(request: Request):
     return templates.TemplateResponse('openalex.html', {'request': request})
 
 
+@app.get('/command', response_class=HTMLResponse)
+def command_center(request: Request):
+    return templates.TemplateResponse('command.html', {'request': request})
+
+
 @app.get('/companies', response_class=HTMLResponse)
 def companies_index(request: Request, msg: str = Query(default='')):
     from sqlmodel import select
