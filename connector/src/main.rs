@@ -138,8 +138,19 @@ fn main() -> anyhow::Result<()> {
                     Err(_) => continue,
                 };
 
-                let id = req.get("id").cloned().unwrap_or(Value::Null);
+                let id_val = req.get("id").cloned();
                 let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+
+                // Notifications have no id; per JSON-RPC/MCP, we must not respond to them.
+                if id_val.is_none() {
+                    // Common MCP notification; ignore.
+                    if method == "notifications/initialized" || method == "initialized" {
+                        continue;
+                    }
+                    continue;
+                }
+
+                let id = id_val.unwrap_or(Value::Null);
 
                 let resp = match method {
                     "initialize" => {
