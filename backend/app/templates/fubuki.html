@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0">Fubuki</h1>
+      <div class="hint">Embedded agent UI (served locally; calls route through Sourceress backend).</div>
+    </div>
+    <div>
+      <a class="pill" href="/command">Command</a>
+    </div>
+  </div>
+
+  <div class="panel" style="padding: 0; overflow:hidden;">
+    <iframe src="/static/sourceress.html" style="width:100%; height: calc(100vh - 220px); border:0;"></iframe>
+  </div>
+{% endblock %}

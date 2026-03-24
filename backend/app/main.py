@@ -29,6 +29,7 @@ from .posted_ranges import CompanyPostedRange
 from .gdelt_client import fetch_doc_list
 from .wikidata_client import enrich_company_by_name, fetch_company, search_company_qid
 from .sec_edgar_client import fetch_company_submissions, norm_cik
+from .fubuki_service import fubuki_call
 from .experience import CandidateExperience, parse_linkedin_experience_paste, compute_experience_stats, fmt_months
 from .auth import get_bearer_token, verify_supabase_jwt, email_allowed
 from .secrets_store import set_github_token, get_github_token
@@ -229,6 +230,11 @@ def stack_index(request: Request):
 @app.get('/openalex', response_class=HTMLResponse)
 def openalex_index(request: Request):
     return templates.TemplateResponse('openalex.html', {'request': request})
+
+
+@app.get('/agent/fubuki', response_class=HTMLResponse)
+def fubuki_ui(request: Request):
+    return templates.TemplateResponse('fubuki.html', {'request': request})
 
 
 @app.get('/command', response_class=HTMLResponse)
@@ -549,6 +555,70 @@ def company_detail(request: Request, company_id: int):
 def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''), mid: str = Form(''), high: str = Form(''), notes: str = Form('')):
     # Legacy endpoint (kept for compatibility). Prefer /comp/add + table.
     return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
+
+
+@app.get('/agent/fubuki/modes')
+def fubuki_modes():
+    # Source of truth is the embedded UI's MODES; backend expects these keys.
+    return {
+        'source':  {'label': 'SOURCE & EVALUATE',     'desc': "Paste a profile, GitHub URL, or describe who you're hunting"},
+        'boolean': {'label': 'BOOLEAN / SEARCH',      'desc': 'Describe the role — returns search strings'},
+        'outreach':{'label': 'OUTREACH WRITER',       'desc': 'Describe the candidate and role — returns full sequence'},
+        'screen':  {'label': 'SCREEN CANDIDATE',      'desc': 'Specify the role — returns question bank'},
+        'fake':    {'label': 'FAKE PROFILE DETECT',   'desc': 'Paste profile text — returns authenticity score + threat check'},
+    }
+
+
+@app.post('/agent/fubuki/query')
+async def fubuki_query(request: Request):
+    # Protected by the same auth middleware as the rest of the app.
+    data = await request.json()
+    mode = (data.get('mode') or '').strip()
+    msg = (data.get('message') or '').strip()
+    hist = data.get('history') or []
+    specs = data.get('active_specs') or []
+
+    if mode not in ('source', 'boolean', 'outreach', 'screen', 'fake'):
+        return JSONResponse({'ok': False, 'error': 'invalid mode'}, status_code=400)
+    if not msg:
+        return JSONResponse({'ok': False, 'error': 'missing message'}, status_code=400)
+
+    # Load system prompt from the embedded HTML at runtime (single source of truth)
+    # This avoids duplicating prompts in Python and drifting.
+    try:
+        import re
+        import pathlib
+        p = pathlib.Path('app/static/sourceress.html')
+        html = p.read_text(encoding='utf-8', errors='ignore')
+        # Find mode block: modeName: { ... system: `...` }
+        m = re.search(rf"{mode}\s*:\s*\{{[^}}]*?system\s*:\s*`(.*?)`\s*,", html, flags=re.DOTALL)
+        if not m:
+            return JSONResponse({'ok': False, 'error': 'system prompt not found'}, status_code=500)
+        system = m.group(1)
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': f'failed to load prompt: {e}'}, status_code=500)
+
+    if specs and isinstance(specs, list):
+        system = system + "\n\nActive specialization context: " + ", ".join([str(s).strip() for s in specs if str(s).strip()])
+
+    # Normalize history
+    messages = []
+    if isinstance(hist, list):
+        for h in hist:
+            if not isinstance(h, dict):
+                continue
+            r = (h.get('role') or '').strip()
+            c = (h.get('content') or '').strip()
+            if r in ('user', 'assistant') and c:
+                messages.append({'role': r, 'content': c})
+    messages.append({'role': 'user', 'content': msg})
+
+    try:
+        out = fubuki_call(system=system, messages=messages, max_tokens=1500)
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
+
+    return JSONResponse({'mode': mode, 'response': out, 'mode_label': mode.upper()})
 
 
 @app.post('/companies/{company_id:int}/tags')
