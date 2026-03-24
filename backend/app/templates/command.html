@@ -99,15 +99,25 @@
     <div style="display:flex; justify-content: space-between; align-items: baseline; gap: 12px;">
       <div>
         <div style="font-weight:900;">Competitive landscape</div>
-        <div class="hint">Benchmark comp vs baseline (Ava Labs). Stack/skills overlap scoring comes next.</div>
+        <div class="hint">Benchmark comp vs baseline (Ava Labs). Filter by department.</div>
       </div>
       <div class="pill">demo</div>
     </div>
 
     {% if baseline %}
-      <div class="info" style="margin-top: 10px;">
-        Baseline detected: <strong>{{ baseline.name }}</strong> — import comp rows for multiple roles (SWE/PM/DS) in Talent Mapping.
-        <span class="hint">(Baseline company is excluded from the benchmark list.)</span>
+      <div class="info" style="margin-top: 10px; display:flex; justify-content:space-between; gap: 12px; align-items:baseline; flex-wrap:wrap;">
+        <div>
+          Baseline detected: <strong>{{ baseline.name }}</strong> — import comp rows for multiple roles in Talent Mapping.
+          <span class="hint">(Baseline company is excluded from the benchmark list.)</span>
+        </div>
+        <div>
+          <span class="hint">Department</span>
+          <select onchange="window.location.search='?dept='+encodeURIComponent(this.value)" style="width:auto; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+            {% for k,v in dept_opts %}
+              <option value="{{ k }}" {% if k==dept %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+        </div>
       </div>
     {% else %}
       <div class="danger" style="margin-top: 10px;">No baseline company found (name contains "ava"). Add Ava Labs to Talent Mapping first.</div>

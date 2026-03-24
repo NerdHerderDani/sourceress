@@ -236,10 +236,26 @@ def command_center(request: Request):
     """Demo hub.
 
     MVP benchmarking: compare other companies' comp bands to Ava Labs baseline.
+    Supports department/category filtering (engineering/product/...).
     """
     from sqlmodel import select
 
+    dept = (request.query_params.get('dept') or 'engineering').strip().lower()
+    dept_opts = [
+        ('engineering', 'Engineering'),
+        ('product', 'Product'),
+        ('data', 'Data'),
+        ('design', 'Design'),
+        ('marketing', 'Marketing'),
+        ('sales', 'Sales'),
+        ('other', 'Other'),
+        ('all', 'All'),
+    ]
+    if dept not in {k for k, _ in dept_opts}:
+        dept = 'engineering'
+
     def family(role: str) -> str:
+        # Within any dept, we still break down into these families for display.
         r = (role or '').lower()
         if 'product' in r or r.startswith('pm'):
             return 'PM'
@@ -261,7 +277,10 @@ def command_center(request: Request):
 
     with get_session() as s:
         companies = s.exec(select(Company).order_by(Company.name.asc())).all()
-        comp_rows = s.exec(select(CompanyCompBand)).all()
+        if dept == 'all':
+            comp_rows = s.exec(select(CompanyCompBand)).all()
+        else:
+            comp_rows = s.exec(select(CompanyCompBand).where(CompanyCompBand.dept == dept)).all()
 
     # baseline: first company with 'ava' in name
     baseline = None
@@ -330,6 +349,8 @@ def command_center(request: Request):
         'request': request,
         'baseline': baseline,
         'table': table,
+        'dept': dept,
+        'dept_opts': dept_opts,
     })
 
 
@@ -559,7 +580,7 @@ def company_links_save(company_id: int, github_org_url: str = Form(''), linkedin
 
 
 @app.post('/companies/{company_id:int}/comp/add')
-def company_comp_add(company_id: int, role: str = Form(''), level: str = Form(''), location: str = Form(''), currency: str = Form('USD'), low: str = Form(''), mid: str = Form(''), high: str = Form(''), bonus: str = Form(''), equity: str = Form(''), source_url: str = Form(''), notes: str = Form('')):
+def company_comp_add(company_id: int, dept: str = Form('engineering'), role: str = Form(''), level: str = Form(''), location: str = Form(''), currency: str = Form('USD'), low: str = Form(''), mid: str = Form(''), high: str = Form(''), bonus: str = Form(''), equity: str = Form(''), source_url: str = Form(''), notes: str = Form('')):
     rl = (role or '').strip()
     if not rl:
         return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
@@ -579,6 +600,7 @@ def company_comp_add(company_id: int, role: str = Form(''), level: str = Form(''
             return HTMLResponse('company not found', status_code=404)
         row = CompanyCompBand(
             company_id=company_id,
+            dept=(dept or 'engineering').strip() or 'engineering',
             role=rl,
             level=(level or '').strip(),
             location=(location or '').strip(),
@@ -612,6 +634,7 @@ def company_comp_edit_page(request: Request, company_id: int, row_id: int):
 def company_comp_edit_save(
     company_id: int,
     row_id: int,
+    dept: str = Form('engineering'),
     role: str = Form(''),
     level: str = Form(''),
     location: str = Form(''),
@@ -637,6 +660,7 @@ def company_comp_edit_save(
         row = s.get(CompanyCompBand, row_id)
         if not row or row.company_id != company_id:
             return HTMLResponse('not found', status_code=404)
+        row.dept = (dept or 'engineering').strip() or 'engineering'
         row.role = (role or '').strip()
         row.level = (level or '').strip()
         row.location = (location or '').strip()
@@ -668,6 +692,7 @@ def company_comp_delete(company_id: int, row_id: int):
 @app.post('/companies/{company_id:int}/comp/bulk-add')
 def company_comp_bulk_add(
     company_id: int,
+    dept: str = Form('engineering'),
     role: str = Form(''),
     location: str = Form(''),
     source_url: str = Form(''),
@@ -719,6 +744,7 @@ def company_comp_bulk_add(
 
             s.add(CompanyCompBand(
                 company_id=company_id,
+                dept=(dept or 'engineering').strip() or 'engineering',
                 role=rl,
                 level=lv,
                 location=loc,
@@ -738,7 +764,7 @@ def company_comp_bulk_add(
 
 
 @app.post('/companies/{company_id:int}/comp/import')
-def company_comp_import(company_id: int, raw_table: str = Form(''), source_url: str = Form(''), replace: str = Form('')):
+def company_comp_import(company_id: int, raw_table: str = Form(''), source_url: str = Form(''), replace: str = Form(''), dept: str = Form('engineering')):
     import csv
     from io import StringIO
     from sqlmodel import select
@@ -837,6 +863,7 @@ def company_comp_import(company_id: int, raw_table: str = Form(''), source_url: 
 
             s.add(CompanyCompBand(
                 company_id=company_id,
+                dept=(dept or 'engineering').strip() or 'engineering',
                 role=role,
                 level=level,
                 location=loc,

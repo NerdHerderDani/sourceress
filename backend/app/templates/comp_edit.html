@@ -12,6 +12,19 @@
 
 <div class="panel">
   <form method="post" action="/companies/{{ c.id }}/comp/{{ row.id }}/edit" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+    <div>
+      <div class="hint">Department</div>
+      <select name="dept" style="width:180px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+        {% set d = (row.dept or 'engineering') %}
+        <option value="engineering" {% if d=='engineering' %}selected{% endif %}>Engineering</option>
+        <option value="product" {% if d=='product' %}selected{% endif %}>Product</option>
+        <option value="data" {% if d=='data' %}selected{% endif %}>Data</option>
+        <option value="design" {% if d=='design' %}selected{% endif %}>Design</option>
+        <option value="marketing" {% if d=='marketing' %}selected{% endif %}>Marketing</option>
+        <option value="sales" {% if d=='sales' %}selected{% endif %}>Sales</option>
+        <option value="other" {% if d=='other' %}selected{% endif %}>Other</option>
+      </select>
+    </div>
     <div style="min-width:220px; flex:1;">
       <div class="hint">Role</div>
       <input name="role" value="{{ row.role }}" />

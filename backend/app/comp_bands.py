@@ -12,6 +12,9 @@ class CompanyCompBand(SQLModel, table=True):
 
     company_id: int = Field(index=True, foreign_key='company.id')
 
+    # Department/category used for benchmarking (engineering|product|marketing|sales|design|data|other)
+    dept: str = Field(default='engineering', index=True)
+
     role: str = Field(default='', index=True)
     level: str = Field(default='', index=True)
     location: str = Field(default='', index=True)

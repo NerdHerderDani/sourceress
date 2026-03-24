@@ -126,6 +126,18 @@
 
     <form method="post" action="/companies/{{ c.id }}/comp/add" style="margin-top: 10px; display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
       <div>
+        <div class="hint">Department</div>
+        <select name="dept" style="width:160px; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+          <option value="engineering">Engineering</option>
+          <option value="product">Product</option>
+          <option value="data">Data</option>
+          <option value="design">Design</option>
+          <option value="marketing">Marketing</option>
+          <option value="sales">Sales</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
         <div class="hint">Role</div>
         <input name="role" placeholder="Software Engineer" value="" style="width:180px;" />
       </div>
@@ -174,6 +186,18 @@
 
       <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-top: 10px;">
         <div>
+          <div class="hint">Department</div>
+          <select id="bulkDept" style="padding:10px 12px; border-radius:10px; border:1px solid var(--border); background: var(--panel2); color: var(--text);">
+            <option value="engineering">Engineering</option>
+            <option value="product">Product</option>
+            <option value="data">Data</option>
+            <option value="design">Design</option>
+            <option value="marketing">Marketing</option>
+            <option value="sales">Sales</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div>
           <div class="hint">Mode</div>
           <select id="lvlMode">
             <option value="L">L1–L10</option>
@@ -196,6 +220,7 @@
       </div>
 
       <form method="post" action="/companies/{{ c.id }}/comp/bulk-add" style="margin-top: 10px;">
+        <input type="hidden" name="dept" id="bulkDeptH" />
         <input type="hidden" name="role" id="bulkRoleH" />
         <input type="hidden" name="location" id="bulkLocH" />
         <input type="hidden" name="source_url" id="bulkSrcH" />
@@ -211,6 +236,7 @@
 
       <script>
         function syncBulkHidden(){
+          document.getElementById('bulkDeptH').value = (document.getElementById('bulkDept').value || 'engineering');
           document.getElementById('bulkRoleH').value = (document.getElementById('bulkRole').value || '').trim();
           document.getElementById('bulkLocH').value = (document.getElementById('bulkLoc').value || '').trim();
           document.getElementById('bulkSrcH').value = (document.getElementById('bulkSrc').value || '').trim();
