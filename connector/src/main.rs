@@ -165,7 +165,7 @@ fn main() -> anyhow::Result<()> {
                             "result": {
                                 "tools": [
                                     {
-                                        "name": "sourceress.company_upsert",
+                                        "name": "sourceress_company_upsert",
                                         "description": "Create/update a company in Talent Mapping (name, tags, links)",
                                         "inputSchema": {
                                             "type": "object",
@@ -180,7 +180,7 @@ fn main() -> anyhow::Result<()> {
                                         }
                                     },
                                     {
-                                        "name": "sourceress.comp_import_csv",
+                                        "name": "sourceress_comp_import_csv",
                                         "description": "Import comp rows from CSV/TSV text for a company",
                                         "inputSchema": {
                                             "type": "object",
@@ -202,11 +202,11 @@ fn main() -> anyhow::Result<()> {
                         let args = req.get("params").and_then(|p| p.get("arguments")).cloned().unwrap_or(json!({}));
 
                         let result: anyhow::Result<Value> = match name {
-                            "sourceress.company_upsert" => {
+                            "sourceress_company_upsert" => {
                                 let url = format!("{}/agent/company/upsert", base);
                                 post_json(&url, &cli.bearer, Some(agent_key.trim()), args)
                             }
-                            "sourceress.comp_import_csv" => {
+                            "sourceress_comp_import_csv" => {
                                 let url = format!("{}/agent/company/comp/import_csv", base);
                                 post_json(&url, &cli.bearer, Some(agent_key.trim()), args)
                             }

@@ -24,8 +24,8 @@ SourceressConnector.exe start
 - Optional: `--bearer <token>` if auth bypass is disabled
 
 ## Tools (initial)
-- `sourceress.company_upsert`
-- `sourceress.comp_import_csv`
+- `sourceress_company_upsert`
+- `sourceress_comp_import_csv`
 
 ## Notes
 - This connector does **not** call any LLM.
