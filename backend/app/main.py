@@ -335,14 +335,16 @@ def command_center(request: Request):
             if not a or not b:
                 continue
             dm = (a.get('mid', 0) or 0) - (b.get('mid', 0) or 0)
+            pct = None
             flag = ''
             if b.get('mid', 0) and a.get('mid', 0):
                 ratio = a['mid'] / b['mid']
+                pct = int(round((ratio - 1.0) * 100))
                 if ratio < 0.85:
                     flag = 'UNDER_AVA'
                 elif ratio > 1.15:
                     flag = 'OVER_AVA'
-            row['deltas'][fid] = {'mid_delta': dm, 'flag': flag}
+            row['deltas'][fid] = {'mid_delta': dm, 'pct': pct, 'flag': flag}
         table.append(row)
 
     return templates.TemplateResponse('command.html', {

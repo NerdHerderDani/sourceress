@@ -137,7 +137,14 @@
             </div>
             <div class="badges">
               {% for fam, d in r.deltas.items() %}
-                <span class="badge"><strong>{{ fam }}</strong> Δmid {% if d.mid_delta > 0 %}+{% endif %}{{ d.mid_delta }}{% if d.flag %} <span class="pill">{{ d.flag }}</span>{% endif %}</span>
+                <span class="badge"><strong>{{ fam }}</strong>
+                  {% if d.pct is not none %}
+                    <span style="font-weight:800;">{% if d.pct > 0 %}+{% endif %}{{ d.pct }}%</span> <span class="hint">vs Ava (mid)</span>
+                  {% else %}
+                    <span class="hint">n/a</span>
+                  {% endif %}
+                  {% if d.flag %} <span class="pill">{{ d.flag }}</span>{% endif %}
+                </span>
               {% endfor %}
             </div>
           </div>
