@@ -33,6 +33,20 @@ fn pick_free_port() -> anyhow::Result<u16> {
     Ok(port)
 }
 
+fn port_available(host: &str, port: u16) -> bool {
+    TcpListener::bind((host, port)).is_ok()
+}
+
+fn pick_preferred_port() -> anyhow::Result<u16> {
+    // Prefer a stable port so external tools (curl, MCP connectors) can talk to the app.
+    let preferred: u16 = 8000;
+    if port_available("127.0.0.1", preferred) {
+        Ok(preferred)
+    } else {
+        pick_free_port()
+    }
+}
+
 #[tauri::command]
 fn token_get() -> Result<String, String> {
     keyring_entry()
@@ -136,8 +150,8 @@ fn backend_start(app: tauri::AppHandle, state: tauri::State<'_, Mutex<BackendSta
         .get_password()
         .map_err(|_| "GitHub token not set. Please paste it in Settings.".to_string())?;
 
-    let port = pick_free_port().map_err(|e| e.to_string())?;
-    let url = format!("http://127.0.0.1:{port}/");
+    let port = pick_preferred_port().map_err(|e| e.to_string())?;
+    let url = format!("http://127.0.0.1:{port}");
 
     // Start bundled backend sidecar (no Python install needed).
     let sidecar = find_sidecar_exe(&app)
