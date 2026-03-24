@@ -36,6 +36,8 @@
   --muted: #8b949e;
   --link: #ff6b6b;
   --accent: #ff3b3b;
+  --radius: 0px;
+  --font-ui: ui-monospace, "Cascadia Mono", "Cascadia Code", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 @media (prefers-color-scheme: light) {
@@ -56,7 +58,7 @@ html, body {
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-family: var(--font-ui);
   background:
     radial-gradient(900px 520px at 10% -10%, rgba(255,59,59,0.10), transparent 55%),
     radial-gradient(700px 520px at 110% 20%, rgba(255,154,59,0.08), transparent 50%),
@@ -73,7 +75,7 @@ body {
 .brand img {
   width: 28px;
   height: 28px;
-  border-radius: 10px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
 }
 
@@ -104,7 +106,7 @@ body {
 
 button {
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--accent) 18%, var(--panel)),
@@ -124,7 +126,7 @@ button:hover {
 .panel {
   margin-top: 12px;
   padding: 12px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--panel);
 }
@@ -143,7 +145,7 @@ button:hover {
 input {
   flex: 1;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
@@ -161,7 +163,9 @@ input {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 12px;
+  border-radius: var(--radius);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
   border: 1px solid var(--border);
   background: transparent;
   cursor: pointer;
@@ -187,6 +191,6 @@ iframe.tabview {
   width: 100%;
   height: calc(100vh - 230px);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: #fff;
 }
