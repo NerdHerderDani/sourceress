@@ -622,6 +622,17 @@ async def agent_comp_import_csv_route(request: Request):
     return JSONResponse({'ok': True, 'added': added})
 
 
+@app.post('/agent/fubuki/dm')
+async def fubuki_dm_route(request: Request):
+    # Protected by standard auth middleware (same as other endpoints).
+    data = await request.json()
+    from .agent_fubuki import fubuki_dm
+    resp, err = fubuki_dm(data)
+    if err:
+        return JSONResponse({'ok': False, 'error': err}, status_code=400)
+    return JSONResponse({'ok': True, 'response': resp or ''})
+
+
 @app.post('/agent/fubuki/query')
 async def fubuki_query(request: Request):
     # Protected by the same auth middleware as the rest of the app.
