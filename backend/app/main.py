@@ -30,6 +30,8 @@ from .gdelt_client import fetch_doc_list
 from .wikidata_client import enrich_company_by_name, fetch_company, search_company_qid
 from .sec_edgar_client import fetch_company_submissions, norm_cik
 from .fubuki_service import fubuki_call
+from .agent_key import agent_key_configured, set_agent_key
+from .agent_api import require_agent_key
 from .experience import CandidateExperience, parse_linkedin_experience_paste, compute_experience_stats, fmt_months
 from .auth import get_bearer_token, verify_supabase_jwt, email_allowed
 from .secrets_store import set_github_token, get_github_token
@@ -557,6 +559,26 @@ def company_set_comp(company_id: int, role: str = Form(''), low: str = Form(''),
     return RedirectResponse(url=f'/companies/{company_id}', status_code=303)
 
 
+@app.get('/agent/key/status')
+def agent_key_status(request: Request):
+    # Protected by standard auth middleware.
+    return JSONResponse({'ok': True, 'configured': agent_key_configured()})
+
+
+@app.post('/agent/key/set')
+async def agent_key_set(request: Request):
+    # Protected by standard auth middleware.
+    data = await request.json()
+    key = (data.get('key') or '').strip()
+    if not key:
+        return JSONResponse({'ok': False, 'error': 'missing key'}, status_code=400)
+    try:
+        set_agent_key(key)
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=400)
+    return JSONResponse({'ok': True})
+
+
 @app.get('/agent/fubuki/modes')
 def fubuki_modes():
     # Source of truth is the embedded UI's MODES; backend expects these keys.
@@ -567,6 +589,37 @@ def fubuki_modes():
         'screen':  {'label': 'SCREEN CANDIDATE',      'desc': 'Specify the role — returns question bank'},
         'fake':    {'label': 'FAKE PROFILE DETECT',   'desc': 'Paste profile text — returns authenticity score + threat check'},
     }
+
+
+@app.post('/agent/company/upsert')
+async def agent_company_upsert_route(request: Request):
+    # Requires standard auth + agent key.
+    deny = require_agent_key(request)
+    if deny:
+        return deny
+
+    data = await request.json()
+    from .agent_tools import agent_company_upsert
+    c, err = agent_company_upsert(data)
+    if err:
+        return JSONResponse({'ok': False, 'error': err}, status_code=400)
+
+    return JSONResponse({'ok': True, 'company': {'id': c.id, 'name': c.name}})
+
+
+@app.post('/agent/company/comp/import_csv')
+async def agent_comp_import_csv_route(request: Request):
+    deny = require_agent_key(request)
+    if deny:
+        return deny
+
+    data = await request.json()
+    from .agent_tools import agent_comp_import_csv
+    added, err = agent_comp_import_csv(data)
+    if err:
+        return JSONResponse({'ok': False, 'error': err}, status_code=400)
+
+    return JSONResponse({'ok': True, 'added': added})
 
 
 @app.post('/agent/fubuki/query')
