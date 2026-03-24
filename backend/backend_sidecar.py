@@ -18,6 +18,17 @@ def pick_free_port() -> int:
     return port
 
 
+def port_available(host: str, port: int) -> bool:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((host, int(port)))
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
 def _bundle_root() -> Path:
     """Return the root directory containing packaged resources.
 
@@ -73,7 +84,9 @@ def run_alembic(repo_root: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=int(os.getenv("PORT", "0") or 0))
+    # Default to a predictable port for local tool bridges.
+    # If the requested/default port is taken, we fall back to a free port.
+    ap.add_argument("--port", type=int, default=int(os.getenv("PORT", "8000") or 8000))
     ap.add_argument("--data-dir", default=os.getenv("SOURCERESS_DATA_DIR", ""))
     args = ap.parse_args()
 
@@ -96,7 +109,12 @@ def main() -> int:
 
     port = int(args.port or 0)
     if port <= 0:
-        port = pick_free_port()
+        port = 8000
+
+    if not port_available(args.host, port):
+        fallback = pick_free_port()
+        print(f"[backend] port {port} unavailable; falling back to {fallback}")
+        port = fallback
 
     run_alembic(repo_root)
 
