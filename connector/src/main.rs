@@ -93,10 +93,12 @@ fn main() -> anyhow::Result<()> {
             let key = gen_key();
             let url = format!("{}/agent/key/set", base);
             let out = post_json(&url, &cli.bearer, None, json!({"key": key}))?;
-            if out.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            if out.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
                 eprintln!("Install failed: {}", out);
                 std::process::exit(1);
             }
+
+            let exe = std::env::current_exe().ok().and_then(|p| p.to_str().map(|s| s.to_string())).unwrap_or_else(|| "SourceressConnector".to_string());
 
             println!("OK: agent key set on Sourceress");
             println!("BASE_URL={}", base);
@@ -106,9 +108,9 @@ fn main() -> anyhow::Result<()> {
             println!("{{");
             println!("  \"mcpServers\": {{");
             println!("    \"sourceress\": {{");
-            println!("      \"command\": \"{}\",");
-            println!("      \"args\": [\"--base-url\", \"{}\", \"start\"],");
-            println!("      \"env\": {{ \"SOURCERESS_AGENT_KEY\": \"{}\" }}");
+            println!("      \"command\": \"{}\"," , exe.replace('\\', "\\\\"));
+            println!("      \"args\": [\"--base-url\", \"{}\", \"start\"]," , base);
+            println!("      \"env\": {{ \"SOURCERESS_AGENT_KEY\": \"{}\" }}" , key);
             println!("    }}");
             println!("  }}");
             println!("}}");
@@ -199,7 +201,7 @@ fn main() -> anyhow::Result<()> {
                         let name = req.get("params").and_then(|p| p.get("name")).and_then(|v| v.as_str()).unwrap_or("");
                         let args = req.get("params").and_then(|p| p.get("arguments")).cloned().unwrap_or(json!({}));
 
-                        let result = match name {
+                        let result: anyhow::Result<Value> = match name {
                             "sourceress.company_upsert" => {
                                 let url = format!("{}/agent/company/upsert", base);
                                 post_json(&url, &cli.bearer, Some(agent_key.trim()), args)
