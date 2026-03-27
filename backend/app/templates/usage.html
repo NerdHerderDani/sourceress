@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0">Usage & Cost</h1>
+      <div class="hint">Recent token usage + estimated cost. Uses configured pricing ($/1M in/out).</div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <a class="pill" href="/agent/fubuki">Fubuki</a>
+      <a class="pill" href="/weekend/jobs">Weekend</a>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+      <div>
+        <h2 style="margin-bottom:6px;">Summary</h2>
+        <div class="subtle" id="pricing"></div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <label class="subtle">Limit</label>
+        <input id="limit" value="500" style="width:110px;" />
+        <button id="refreshBtn">Refresh</button>
+        <span class="subtle" id="msg"></span>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <div>
+        <div class="subtle">Calls</div>
+        <div class="value" id="calls" style="font-weight:900; font-size:22px;">—</div>
+      </div>
+      <div>
+        <div class="subtle">Tokens (in / out)</div>
+        <div class="value" id="tokens" style="font-weight:900; font-size:22px;">—</div>
+      </div>
+      <div>
+        <div class="subtle">Estimated cost</div>
+        <div class="value" id="cost" style="font-weight:900; font-size:22px;">—</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2 style="margin-bottom:10px;">Cost example (Sonnet 4.6)</h2>
+    <div class="subtle" style="margin-bottom:10px;">Example numbers (from your doc): warm cache ≈ <b>$0.0094</b> per profile in real-time, and Batch roughly halves it to <b>$0.0047</b> (async).</div>
+
+    <div class="row">
+      <div>
+        <div class="subtle">50 profiles (Recruiting)</div>
+        <div style="font-weight:900; font-size:18px;">real-time+caching: <span id="ex_rt50">$0.475</span></div>
+        <div class="subtle">batch+caching: <span id="ex_b50">$0.238</span></div>
+      </div>
+      <div>
+        <div class="subtle">$ credit → profiles</div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+          <input id="credit" value="30" style="width:110px;" />
+          <span class="subtle">USD</span>
+          <button id="creditBtn">Calc</button>
+          <span class="subtle" id="creditOut"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="subtle" style="margin-top:10px;">These are illustrative estimates; actual cost varies with profile length/output verbosity.</div>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-bottom:10px;">Averages by type</h2>
+    <div class="subtle" style="margin-bottom:10px;">Grouped by <code>kind</code> + <code>mode</code> + <code>preset</code>.</div>
+    <div id="rows" class="subtle">Loading…</div>
+  </div>
+
+  <script>
+    function fmtUsd(x) {
+      const n = Number(x || 0);
+      return `$${n.toFixed(4)}`;
+    }
+
+    function esc(s) {
+      return (s || '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+    }
+
+    async function load() {
+      const msg = document.getElementById('msg');
+      msg.textContent = 'Loading…';
+      const limit = (document.getElementById('limit').value || '500').trim();
+
+      try {
+        const r = await fetch(`/agent/fubuki/usage?limit=${encodeURIComponent(limit)}`);
+        const d = await r.json();
+        if (!d || d.ok === false) throw new Error(d?.error || 'failed');
+
+        const s = d.summary || {};
+        const t = s.total || {};
+        const p = s.pricing || {};
+        document.getElementById('pricing').textContent = `Pricing: $${p.cost_in_per_m || 0}/1M input · $${p.cost_out_per_m || 0}/1M output`;
+
+        document.getElementById('calls').textContent = (t.n ?? '—');
+        document.getElementById('tokens').textContent = `${t.input_tokens ?? 0} / ${t.output_tokens ?? 0}`;
+        document.getElementById('cost').textContent = fmtUsd(t.est_cost_usd || 0);
+
+        const rows = (s.by_key || []);
+        if (!rows.length) {
+          document.getElementById('rows').innerHTML = 'No usage records yet.';
+          msg.textContent = '';
+          return;
+        }
+
+        document.getElementById('rows').innerHTML = rows.map(x => {
+          const k = `${esc(x.kind)} · ${esc(x.mode)} · ${esc(x.preset)}`.replaceAll('·  ·', '·');
+          return `
+            <div style="border-top:1px solid var(--border); padding:12px 0;">
+              <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                <div style="font-weight:800;">${k}</div>
+                <div class="subtle">n=${x.n}</div>
+              </div>
+              <div class="subtle" style="margin-top:6px; display:flex; gap:14px; flex-wrap:wrap;">
+                <span>avg in: <b>${x.avg_input_tokens}</b></span>
+                <span>avg out: <b>${x.avg_output_tokens}</b></span>
+                <span>avg $: <b>${fmtUsd(x.avg_est_cost_usd)}</b></span>
+                <span>total $: <b>${fmtUsd(x.total_est_cost_usd)}</b></span>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        msg.textContent = '';
+      } catch (e) {
+        msg.textContent = `Error: ${e?.message || e}`;
+      }
+    }
+
+    function calcCredit() {
+      // Use the provided example: warm-cache real-time ≈ $0.00935 per profile; batch ≈ $0.00468.
+      const credit = Number(document.getElementById('credit').value || 0);
+      const rt = 0.00935;
+      const b = 0.00468;
+      const rtN = rt > 0 ? Math.floor(credit / rt) : 0;
+      const bN = b > 0 ? Math.floor(credit / b) : 0;
+      document.getElementById('creditOut').textContent = `≈ ${rtN.toLocaleString()} profiles (real-time) · ≈ ${bN.toLocaleString()} profiles (batch)`;
+    }
+
+    document.getElementById('creditBtn').addEventListener('click', calcCredit);
+    document.getElementById('refreshBtn').addEventListener('click', load);
+    calcCredit();
+    load();
+  </script>
+{% endblock %}

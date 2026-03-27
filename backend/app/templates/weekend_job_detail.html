@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0">Weekend Job #{{ job.id }}</h1>
+      <div class="hint">{{ job.status }} · {{ job.created_at }}</div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <a class="pill" href="/weekend/jobs">Back</a>
+      <a class="pill" href="/agent/fubuki">Fubuki</a>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <div class="row">
+      <div>
+        <div class="subtle">Title</div>
+        <div>{{ job.title or "(untitled)" }}</div>
+      </div>
+      <div>
+        <div class="subtle">Notes</div>
+        <div>{{ job.notes or "" }}</div>
+      </div>
+    </div>
+    {% if job.error %}
+      <div class="danger" style="margin-top:10px;">{{ job.error }}</div>
+    {% endif %}
+
+    <div style="margin-top:12px;">
+      <h2 style="margin-bottom:10px;">Anthropic Batch</h2>
+      <div class="subtle" style="margin-bottom:10px;">
+        {% if job.anthropic_batch_id %}
+          Batch <code>{{ job.anthropic_batch_id }}</code> — <b>{{ job.anthropic_batch_status or 'submitted' }}</b>
+          {% if job.anthropic_model %}<span class="subtle">· model={{ job.anthropic_model }}</span>{% endif %}
+        {% else %}
+          Not submitted yet.
+        {% endif %}
+      </div>
+
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        {% if not job.anthropic_batch_id %}
+          <button id="submitBatchBtn">Submit batch</button>
+        {% endif %}
+        {% if job.anthropic_batch_id %}
+          <button id="pollBatchBtn">Poll status</button>
+        {% endif %}
+        <span class="subtle" id="batchMsg"></span>
+        <span class="subtle" id="batchLast" style="margin-left:auto;"></span>
+      </div>
+
+      <div id="resultViewer" style="margin-top:12px; display:none;">
+        <h3 style="margin:0 0 8px 0; font-size:14px;">Results preview</h3>
+        <div class="subtle" id="resultSummary" style="margin-bottom:8px;"></div>
+        <div id="resultRows" style="border:1px solid var(--border); padding:10px; background: var(--panel2); overflow:auto; max-height:340px; white-space:pre-wrap; font-family: var(--font-ui);"></div>
+      </div>
+    </div>
+
+      <div style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+        <h3 style="margin:0 0 8px 0; font-size:14px;">Manual override</h3>
+        <form id="statusForm" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <select name="status" style="max-width:220px;">
+            {% for s in ['queued','processing','done','error'] %}
+              <option value="{{ s }}" {% if job.status==s %}selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+          <input name="error" placeholder="error message (optional)" style="flex:1; min-width:260px;" />
+          <button type="submit">Update</button>
+          <span class="subtle" id="statusMsg"></span>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-bottom:10px;">Artifacts</h2>
+    {% if not artifacts %}
+      <div class="subtle">No artifacts.</div>
+    {% else %}
+      <div style="overflow:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead>
+            <tr style="text-align:left; color:var(--muted);">
+              <th style="padding:8px; border-bottom:1px solid var(--border);">Kind</th>
+              <th style="padding:8px; border-bottom:1px solid var(--border);">Filename</th>
+              <th style="padding:8px; border-bottom:1px solid var(--border);">Size</th>
+              <th style="padding:8px; border-bottom:1px solid var(--border);">SHA256</th>
+              <th style="padding:8px; border-bottom:1px solid var(--border);"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in artifacts %}
+              <tr>
+                <td style="padding:8px; border-bottom:1px solid var(--border);">{{ a.kind }}</td>
+                <td style="padding:8px; border-bottom:1px solid var(--border);">{{ a.filename }}</td>
+                <td style="padding:8px; border-bottom:1px solid var(--border);">{{ a.size_bytes }}</td>
+                <td style="padding:8px; border-bottom:1px solid var(--border);"><code style="color:var(--muted);">{{ a.sha256[:16] }}…</code></td>
+                <td style="padding:8px; border-bottom:1px solid var(--border); text-align:right;">
+                  <a class="pill" href="/api/weekend/jobs/{{ job.id }}/artifacts/{{ a.id }}/download">Download</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+
+  <script>
+    const submitBtn = document.getElementById('submitBatchBtn');
+    const pollBtn = document.getElementById('pollBatchBtn');
+    const batchMsg = document.getElementById('batchMsg');
+
+    if (submitBtn) {
+      submitBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        batchMsg.textContent = 'Submitting…';
+        try {
+          const r = await fetch(`/api/weekend/jobs/{{ job.id }}/batch/submit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          const d = await r.json();
+          if (!r.ok) { batchMsg.textContent = d.error || 'Submit failed.'; return; }
+          batchMsg.textContent = 'Submitted.';
+          setTimeout(() => location.reload(), 250);
+        } catch(err) {
+          batchMsg.textContent = 'Submit failed.';
+        }
+      });
+    }
+
+    async function pollOnce(reloadOnChange = true) {
+      const last = document.getElementById('batchLast');
+      batchMsg.textContent = 'Polling…';
+      try {
+        const r = await fetch(`/api/weekend/jobs/{{ job.id }}/batch/poll`, { method: 'POST' });
+        const d = await r.json();
+        const stamp = new Date().toLocaleTimeString();
+        if (last) last.textContent = `last checked: ${stamp}`;
+        if (!r.ok) { batchMsg.textContent = d.error || 'Poll failed.'; return null; }
+        const st = (d.batch && (d.batch.processing_status || d.batch.status)) || 'unknown';
+        batchMsg.textContent = `Status: ${st}`;
+        if (reloadOnChange) setTimeout(() => location.reload(), 400);
+        return d;
+      } catch(err) {
+        batchMsg.textContent = 'Poll failed.';
+        return null;
+      }
+    }
+
+    if (pollBtn) {
+      pollBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        await pollOnce(true);
+      });
+    }
+
+    // Auto-poll while batch is in-flight.
+    (function autoPoll() {
+      const batchId = {{ 'true' if job.anthropic_batch_id else 'false' }};
+      const done = {{ 'true' if job.status in ['done','error'] else 'false' }};
+      if (!batchId || done) return;
+      const intervalMs = 60_000;
+      setTimeout(async () => {
+        await pollOnce(true);
+      }, intervalMs);
+    })();
+
+    // Results preview: find latest result artifact and render a friendly-ish view.
+    async function loadResultsPreview() {
+      const box = document.getElementById('resultViewer');
+      const rows = document.getElementById('resultRows');
+      const sum = document.getElementById('resultSummary');
+      if (!box || !rows) return;
+
+      try {
+        const r = await fetch(`/api/weekend/jobs/{{ job.id }}`);
+        const d = await r.json();
+        if (!r.ok) return;
+        const arts = d.artifacts || [];
+        const res = arts.filter(a => a.kind === 'result');
+        if (!res.length) return;
+
+        // Prefer newest result artifact.
+        res.sort((a,b) => (b.id||0) - (a.id||0));
+        const a0 = res[0];
+
+        const r2 = await fetch(`/api/weekend/jobs/{{ job.id }}/artifacts/${a0.id}/download`);
+        const text = await r2.text();
+
+        const lines = text.split(/\r?\n/).filter(Boolean);
+        const maxShow = 50;
+        const show = lines.slice(0, maxShow);
+
+        let okN = 0, errN = 0;
+        const rendered = [];
+        for (const ln of show) {
+          try {
+            const o = JSON.parse(ln);
+            const cid = o.custom_id || o.request?.custom_id || '(no custom_id)';
+            const isErr = !!(o.error || o.response?.error);
+            if (isErr) errN++; else okN++;
+
+            let out = '';
+            const content = o.response?.content;
+            if (Array.isArray(content)) {
+              const t = content.map(x => x.text || '').filter(Boolean).join('\n');
+              out = t || JSON.stringify(content);
+            } else if (typeof content === 'string') {
+              out = content;
+            } else {
+              out = (o.response && JSON.stringify(o.response)) || '';
+            }
+
+            rendered.push(`--- ${cid} ${isErr ? '(ERROR)' : ''}\n${out}`);
+          } catch {
+            rendered.push(ln);
+          }
+        }
+
+        box.style.display = 'block';
+        sum.textContent = `Showing ${Math.min(maxShow, lines.length)} of ${lines.length} result lines · ok=${okN} · errors=${errN}`;
+        rows.textContent = rendered.join('\n\n');
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    loadResultsPreview();
+
+    document.getElementById('statusForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('statusMsg');
+      msg.textContent = 'Updating…';
+      const fd = new FormData(e.target);
+      const payload = { status: fd.get('status'), error: fd.get('error') };
+      try {
+        const r = await fetch(`/api/weekend/jobs/{{ job.id }}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (!r.ok) { msg.textContent = d.error || 'Failed.'; return; }
+        msg.textContent = 'Updated.';
+        setTimeout(() => location.reload(), 250);
+      } catch(err) {
+        msg.textContent = 'Failed.';
+      }
+    });
+  </script>
+{% endblock %}

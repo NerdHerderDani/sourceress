@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0">Weekend Mode</h1>
+      <div class="hint">Upload zip/multi-file → submit to Anthropic Batch → poll for results (async; come back later).</div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <a class="pill" href="/agent/fubuki">Fubuki</a>
+      <a class="pill" href="/">Search</a>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2 style="margin-bottom:10px;">Cost cheat-sheet</h2>
+    <div class="subtle" style="margin-bottom:8px;">Warm cache: ~<b>$0.0094</b>/profile (real-time). Weekend Batch roughly halves it: ~<b>$0.0047</b>/profile (async).</div>
+    <div class="subtle">Pro tip: this is why Weekend Mode exists.</div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2 style="margin-bottom:10px;">New job</h2>
+    <form id="jobForm" enctype="multipart/form-data">
+      <div class="row">
+        <div>
+          <label class="subtle">Title (optional)</label>
+          <input name="title" placeholder="e.g. Weekend batch — 2026-03-30" />
+        </div>
+        <div>
+          <label class="subtle">Notes (optional)</label>
+          <input name="notes" placeholder="Anything you want to remember" />
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label class="subtle">Upload files (ZIP or multiple files)</label>
+        <input name="files" type="file" multiple />
+        <div class="subtle" style="margin-top:6px;">If you upload a .zip, we'll extract it. Use this for Friday → Monday bulk runs.</div>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:10px; align-items:center;">
+        <button type="submit">Create job</button>
+        <div class="subtle" id="jobMsg"></div>
+      </div>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-bottom:10px;">Jobs</h2>
+    <div id="jobs" class="subtle">Loading…</div>
+  </div>
+
+  <script>
+    async function refreshJobs() {
+      const el = document.getElementById('jobs');
+      try {
+        const r = await fetch('/api/weekend/jobs');
+        const d = await r.json();
+        const jobs = d.jobs || [];
+        if (!jobs.length) {
+          el.innerHTML = 'No jobs yet.';
+          return;
+        }
+        el.innerHTML = jobs.map(j => {
+          const err = j.error ? `<div class="danger" style="margin-top:6px;">${j.error}</div>` : '';
+          const counts = `${j.upload_count||0} uploads · ${j.extracted_count||0} extracted · ${j.result_count||0} results`;
+          return `
+            <div style="border-top:1px solid var(--border); padding:12px 0;">
+              <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                <div>
+                  <div><b>#${j.id}</b> — ${j.title || '(untitled)'} <span class="subtle">(${j.status})</span></div>
+                  ${j.anthropic_batch_id ? `<div class="subtle" style="margin-top:4px;">Batch <code>${j.anthropic_batch_id}</code> — ${j.anthropic_batch_status || 'submitted'}</div>` : ''}
+                  <div class="subtle" style="margin-top:4px;">${new Date(j.created_at).toLocaleString()} · ${counts}</div>
+                  ${j.notes ? `<div class="subtle" style="margin-top:6px;">${j.notes}</div>` : ''}
+                  ${err}
+                </div>
+                <div style="display:flex; gap:8px; align-items:flex-start;">
+                  <a class="pill" href="/weekend/jobs/${j.id}">View</a>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch(e) {
+        el.innerHTML = '<span class="danger">Failed to load jobs.</span>';
+      }
+    }
+
+    document.getElementById('jobForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('jobMsg');
+      msg.textContent = 'Uploading…';
+      const fd = new FormData(e.target);
+      try {
+        const r = await fetch('/api/weekend/jobs', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) {
+          msg.textContent = d.error || 'Upload failed.';
+          return;
+        }
+        msg.textContent = `Created job #${d.job_id}.`;
+        e.target.reset();
+        await refreshJobs();
+      } catch(err) {
+        msg.textContent = 'Upload failed.';
+      }
+    });
+
+    refreshJobs();
+  </script>
+{% endblock %}

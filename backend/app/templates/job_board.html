@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block body %}
+  <div class="topbar">
+    <div>
+      <h1 style="margin:0;">Job Board</h1>
+      <div class="subtle">Ashby public job postings API. Showing published, listed roles.</div>
+    </div>
+    <div class="pill" id="jb-meta">loading…</div>
+  </div>
+
+  <div class="panel">
+    <div class="grid2" style="align-items:end;">
+      <div>
+        <label>Filter</label>
+        <input id="jb-filter" placeholder="e.g. engineer, remote, security, infra" />
+        <div class="hint" style="margin-top:6px;">Matches title, department, team, location, workplace type.</div>
+      </div>
+      <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
+        <button class="btn" id="jb-refresh">Refresh</button>
+        <button class="btn secondary" id="jb-toggle-comp">Comp: {{ 'on' if include_compensation else 'off' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="jb-list" style="margin-top: 14px;"></div>
+
+  <script>
+    (function() {
+      const elList = document.getElementById('jb-list');
+      const elMeta = document.getElementById('jb-meta');
+      const elFilter = document.getElementById('jb-filter');
+      const elRefresh = document.getElementById('jb-refresh');
+      const elToggleComp = document.getElementById('jb-toggle-comp');
+
+      let includeComp = {{ 'true' if include_compensation else 'false' }};
+      let jobs = [];
+
+      function norm(s) { return (s || '').toString().toLowerCase(); }
+
+      function jobHay(j) {
+        return [
+          j.title,
+          j.department,
+          j.team,
+          j.location,
+          j.workplaceType,
+          j.employmentType,
+          (j.secondaryLocations || []).map(x => x.location).join(' ')
+        ].filter(Boolean).join(' • ');
+      }
+
+      function fmtBadges(j) {
+        const b = [];
+        if (j.workplaceType) b.push(j.workplaceType);
+        if (j.employmentType) b.push(j.employmentType);
+        if (j.isRemote) b.push('Remote');
+        if (j.department) b.push(j.department);
+        if (j.team) b.push(j.team);
+        return b;
+      }
+
+      function render(list) {
+        elList.innerHTML = '';
+        if (!list.length) {
+          const p = document.createElement('div');
+          p.className = 'panel';
+          p.textContent = 'No jobs found.';
+          elList.appendChild(p);
+          return;
+        }
+
+        for (const j of list) {
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.style.flexDirection = 'column';
+
+          const top = document.createElement('div');
+          top.style.display = 'flex';
+          top.style.justifyContent = 'space-between';
+          top.style.gap = '12px';
+          top.style.flexWrap = 'wrap';
+
+          const left = document.createElement('div');
+          const t = document.createElement('div');
+          t.style.fontWeight = '900';
+          t.style.fontSize = '16px';
+          t.textContent = j.title || '(untitled)';
+
+          const loc = document.createElement('div');
+          loc.className = 'meta';
+          loc.textContent = j.location || '';
+
+          left.appendChild(t);
+          left.appendChild(loc);
+
+          const right = document.createElement('div');
+          right.className = 'cardActions';
+
+          const a1 = document.createElement('a');
+          a1.className = 'btn secondary';
+          a1.href = j.jobUrl || '#';
+          a1.target = '_blank';
+          a1.rel = 'noreferrer';
+          a1.textContent = 'View';
+
+          const a2 = document.createElement('a');
+          a2.className = 'btn';
+          a2.href = j.applyUrl || j.jobUrl || '#';
+          a2.target = '_blank';
+          a2.rel = 'noreferrer';
+          a2.textContent = 'Apply';
+
+          right.appendChild(a1);
+          right.appendChild(a2);
+
+          top.appendChild(left);
+          top.appendChild(right);
+          card.appendChild(top);
+
+          const badges = document.createElement('div');
+          badges.className = 'badges';
+          for (const x of fmtBadges(j)) {
+            const b = document.createElement('span');
+            b.className = 'badge';
+            b.textContent = x;
+            badges.appendChild(b);
+          }
+          card.appendChild(badges);
+
+          if (includeComp && j.compensation && (j.compensation.compensationTierSummary || j.compensation.scrapeableCompensationSalarySummary)) {
+            const c = document.createElement('div');
+            c.className = 'info';
+            c.style.marginTop = '10px';
+            c.textContent = j.compensation.compensationTierSummary || j.compensation.scrapeableCompensationSalarySummary;
+            card.appendChild(c);
+          }
+
+          const desc = document.createElement('div');
+          desc.className = 'details collapsed';
+          desc.style.marginTop = '10px';
+          const d = document.createElement('div');
+          d.className = 'panel';
+          d.style.padding = '12px';
+          d.innerHTML = (j.descriptionHtml || '').toString();
+          desc.appendChild(d);
+
+          const toggle = document.createElement('button');
+          toggle.className = 'btnToggle';
+          toggle.style.marginTop = '10px';
+          toggle.textContent = 'Details';
+          toggle.addEventListener('click', () => {
+            const isCollapsed = desc.classList.contains('collapsed');
+            desc.classList.toggle('collapsed', !isCollapsed);
+            toggle.textContent = isCollapsed ? 'Hide details' : 'Details';
+          });
+
+          card.appendChild(toggle);
+          card.appendChild(desc);
+
+          elList.appendChild(card);
+        }
+      }
+
+      function applyFilter() {
+        const q = norm(elFilter.value).trim();
+        if (!q) return render(jobs);
+        const parts = q.split(/\s+/g).filter(Boolean);
+        const out = jobs.filter(j => {
+          const hay = norm(jobHay(j));
+          return parts.every(p => hay.includes(p));
+        });
+        render(out);
+      }
+
+      async function load() {
+        elMeta.textContent = 'loading…';
+        elRefresh.disabled = true;
+        try {
+          const r = await fetch(`/api/ashby/job-board?includeCompensation=${includeComp ? 'true' : 'false'}`);
+          const data = await r.json();
+          if (!data || data.ok === false) {
+            throw new Error((data && data.error) || 'unknown error');
+          }
+          jobs = (data.jobs || []).filter(j => j && j.isListed !== false);
+          elMeta.textContent = `${jobs.length} jobs • ${data.boardName || ''}`.trim();
+          applyFilter();
+        } catch (e) {
+          elMeta.textContent = 'error';
+          elList.innerHTML = `<div class="panel"><div class="danger">${(e && e.message) || 'failed'}</div><div class="subtle" style="margin-top:6px;">Set ASHBY_JOB_BOARD_NAME in backend/.env if needed.</div></div>`;
+        }
+        elRefresh.disabled = false;
+      }
+
+      elFilter.addEventListener('input', () => applyFilter());
+      elRefresh.addEventListener('click', () => load());
+      elToggleComp.addEventListener('click', () => {
+        includeComp = !includeComp;
+        elToggleComp.textContent = `Comp: ${includeComp ? 'on' : 'off'}`;
+        load();
+      });
+
+      load();
+    })();
+  </script>
+{% endblock %}

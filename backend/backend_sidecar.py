@@ -84,9 +84,9 @@ def run_alembic(repo_root: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
-    # Default to a predictable port for local tool bridges.
-    # If the requested/default port is taken, we fall back to a free port.
-    ap.add_argument("--port", type=int, default=int(os.getenv("PORT", "8000") or 8000))
+    # Default to an ephemeral free port to avoid conflicts with dev servers or stale sidecars.
+    # If PORT is provided, we'll try it; otherwise we pick a free port.
+    ap.add_argument("--port", type=int, default=int(os.getenv("PORT", "0") or 0))
     ap.add_argument("--data-dir", default=os.getenv("SOURCERESS_DATA_DIR", ""))
     args = ap.parse_args()
 
@@ -97,6 +97,10 @@ def main() -> int:
         os.chdir(repo_root)
     except Exception:
         pass
+
+    # Desktop beta: no login. Force dev-ish defaults unless explicitly overridden.
+    os.environ.setdefault("ENV", "dev")
+    os.environ.setdefault("ALLOWLIST_EMAILS", "")
 
     # Data dir for sqlite
     data_dir = Path(args.data_dir).resolve() if args.data_dir else (repo_root / "data")
@@ -109,7 +113,7 @@ def main() -> int:
 
     port = int(args.port or 0)
     if port <= 0:
-        port = 8000
+        port = pick_free_port()
 
     if not port_available(args.host, port):
         fallback = pick_free_port()
@@ -121,19 +125,30 @@ def main() -> int:
     # Start uvicorn
     import uvicorn  # noqa
 
-    print(f"[backend] running on http://{args.host}:{port}")
     # Ensure our bundled root is on sys.path so `import app.*` works.
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-    uvicorn.run(
-        "app.main:app",
-        app_dir=str(repo_root),
-        host=args.host,
-        port=port,
-        log_level="info",
-    )
-    return 0
+    # Start uvicorn. If we lose a port race (common if multiple sidecars spawn), retry once.
+    for attempt in range(2):
+        try:
+            print(f"[backend] running on http://{args.host}:{port}")
+            uvicorn.run(
+                "app.main:app",
+                app_dir=str(repo_root),
+                host=args.host,
+                port=port,
+                log_level="info",
+            )
+            return 0
+        except OSError as e:
+            if getattr(e, 'errno', None) == 10048 and attempt == 0:
+                # Address already in use
+                new_port = pick_free_port()
+                print(f"[backend] port race on {port}; retrying on {new_port}", file=sys.stderr)
+                port = new_port
+                continue
+            raise
 
 
 if __name__ == "__main__":

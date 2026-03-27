@@ -14,6 +14,25 @@ from .experience import CandidateExperience  # noqa: F401
 from .company_signals import Company, CompanySignal  # noqa: F401
 from .comp_bands import CompanyCompBand  # noqa: F401
 from .posted_ranges import CompanyPostedRange  # noqa: F401
+from .weekend_jobs_model import WeekendJob, WeekendArtifact  # noqa: F401
+
+
+class UsageEvent(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+    owner_email: str = Field(default='', index=True)
+    kind: str = Field(default='', index=True)  # query|dm|...
+    mode: str = Field(default='', index=True)
+    preset: str = Field(default='', index=True)
+
+    model_used: str = Field(default='', index=True)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    est_cost_usd: float = 0.0
+
+    ok: bool = True
+    error: str = ''
 
 class SearchRun(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

@@ -11,6 +11,7 @@
   </div>
 
   <div class="panel" style="padding: 0; overflow:hidden;">
-    <iframe src="/static/sourceress.html" style="width:100%; height: calc(100vh - 220px); border:0;"></iframe>
+    <!-- cache-bust to ensure embedded UI updates during fast iteration -->
+    <iframe src="/static/sourceress.html?v=20260326c" style="width:100%; height: calc(100vh - 220px); border:0;"></iframe>
   </div>
 {% endblock %}

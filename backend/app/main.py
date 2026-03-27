@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import csv
 from io import StringIO
+import logging
 
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,9 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
 import asyncio
+import time
+
+import httpx
 
 from .config import settings
 from .db import init_db, get_session
@@ -29,24 +33,142 @@ from .posted_ranges import CompanyPostedRange
 from .gdelt_client import fetch_doc_list
 from .wikidata_client import enrich_company_by_name, fetch_company, search_company_qid
 from .sec_edgar_client import fetch_company_submissions, norm_cik
-from .fubuki_service import fubuki_call
+from .fubuki_service import fubuki_call, fubuki_call_ex, anthropic_list_models
 from .agent_key import agent_key_configured, set_agent_key
 from .agent_api import require_agent_key
 from .experience import CandidateExperience, parse_linkedin_experience_paste, compute_experience_stats, fmt_months
-from .auth import get_bearer_token, verify_supabase_jwt, email_allowed
+from .auth import get_bearer_token, verify_supabase_jwt, verify_supabase_token_remote, email_allowed
 from .secrets_store import set_github_token, get_github_token
 
+logger = logging.getLogger(__name__)
+
+
+def _data_dir() -> Path:
+    """Return a writable data directory.
+
+    - In dev/CLI runs: ./data
+    - In packaged/installer contexts: prefer %APPDATA%\Sourceress\data
+
+    Best-effort: if anything fails, fall back to ./data.
+    """
+    try:
+        import os
+
+        appdata = (os.environ.get('APPDATA') or '').strip()
+        if appdata:
+            return Path(appdata) / 'Sourceress' / 'data'
+    except Exception:
+        pass
+
+    return Path('data')
+
+
+def _append_usage_log(rec: dict) -> None:
+    """Append one usage record.
+
+    Primary: DB (UsageEvent) when available.
+    Fallback: JSONL under backend/data/.
+
+    Best-effort: never break request handling if logging fails.
+    """
+    rec = dict(rec or {})
+
+    # Try DB first
+    try:
+        from .db import get_session
+        from .models import UsageEvent
+
+        with get_session() as s:
+            ev = UsageEvent(
+                owner_email=str(rec.get('owner_email') or ''),
+                kind=str(rec.get('kind') or ''),
+                mode=str(rec.get('mode') or ''),
+                preset=str(rec.get('preset') or ''),
+                model_used=str(rec.get('model_used') or ''),
+                input_tokens=int(rec.get('input_tokens') or 0),
+                output_tokens=int(rec.get('output_tokens') or 0),
+                est_cost_usd=float(rec.get('est_cost_usd') or 0.0),
+                ok=bool(rec.get('ok', True)),
+                error=str(rec.get('error') or ''),
+            )
+            s.add(ev)
+            s.commit()
+    except Exception:
+        pass
+
+    # Fallback JSONL
+    try:
+        import json
+        import pathlib
+        import time
+
+        rec.setdefault('ts', int(time.time()))
+
+        p = _data_dir()
+        p.mkdir(parents=True, exist_ok=True)
+        out = p / 'fubuki-usage.jsonl'
+        out.write_text('', encoding='utf-8') if not out.exists() else None
+        with out.open('a', encoding='utf-8') as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+    except Exception:
+        return
+
+
+async def _read_json_body(request: Request) -> dict:
+    """Read JSON body with friendlier errors than FastAPI's default.
+
+    This specifically helps when people test with PowerShell + curl.exe and accidentally
+    send malformed JSON (common quoting/escaping issue).
+    """
+    import json
+
+    raw = await request.body()
+    if not raw or not raw.strip():
+        raise ValueError('empty request body')
+
+    try:
+        return json.loads(raw.decode('utf-8', errors='replace'))
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"invalid JSON body: {e}. "
+            "If you are using PowerShell, prefer Invoke-RestMethod + ConvertTo-Json, "
+            "or ensure curl.exe --data-binary contains valid JSON with double-quotes."
+        )
+
+from pathlib import Path
+
 app = FastAPI(title="Sourceress (MVP)")
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
-templates = Jinja2Templates(directory="app/templates")
+
+# Resolve asset paths relative to this file so PyInstaller onefile works.
+_APP_DIR = Path(__file__).resolve().parent
+_STATIC_DIR = _APP_DIR / "static"
+_TEMPLATES_DIR = _APP_DIR / "templates"
+
+app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 # Allow Supabase auth to redirect back and for browser login.
+# NOTE: The desktop app is a Tauri WebView; its requests may arrive with these origins.
+# If we don't explicitly allow them, the WebView will hit CORS errors.
+CORS_ALLOW_ORIGINS = [
+    # Tauri/WebView
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "https://tauri.localhost",
+    "null",
+    # Local dev
+    "http://localhost",
+    "http://127.0.0.1",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
 
@@ -59,15 +181,41 @@ def _get_session_token(req: Request) -> str | None:
 
 
 def _auth_bypass_enabled() -> bool:
+    """Whether to bypass auth.
+
+    Only allowed in dev.
+    """
+    if (settings.env or 'dev') == 'prod':
+        return False
+
     # Local/dev convenience:
-    # - if SUPABASE_JWT_SECRET missing we cannot verify tokens
+    # - if SUPABASE not configured we cannot verify tokens
     # - if ALLOWLIST_EMAILS empty we treat the app as "open" for local use
     allow = [e.strip() for e in (settings.allowlist_emails or '').split(',') if e.strip()]
-    if not settings.supabase_jwt_secret:
+    if not (settings.supabase_jwt_secret or (settings.supabase_url and settings.supabase_anon_key)):
         return True
     if not allow:
         return True
     return False
+
+
+# Simple in-memory rate limiter (best-effort; per-instance on Fly)
+_RATE: dict[str, list[float]] = {}
+
+
+def _rate_allow(key: str, limit: int, window_s: int) -> bool:
+    import time
+
+    now = time.time()
+    lst = _RATE.get(key) or []
+    # keep only recent
+    cutoff = now - float(window_s)
+    lst = [t for t in lst if t >= cutoff]
+    ok = len(lst) < int(limit)
+    if ok:
+        lst.append(now)
+    _RATE[key] = lst
+    return ok
 
 
 @app.middleware('http')
@@ -92,6 +240,8 @@ async def _auth_mw(request: Request, call_next):
 
     claims = verify_supabase_jwt(tok)
     if not claims:
+        claims = await verify_supabase_token_remote(tok)
+    if not claims:
         return RedirectResponse(url='/login', status_code=303)
 
     email = (claims.get('email') or '').strip()
@@ -99,15 +249,133 @@ async def _auth_mw(request: Request, call_next):
         return JSONResponse({'ok': False, 'error': 'not invited'}, status_code=403)
 
     request.state.user_email = email
+
+    # Rate limiting (only after auth so we can key by user)
+    try:
+        ip = (request.headers.get('x-forwarded-for') or request.client.host or '').split(',')[0].strip()
+    except Exception:
+        ip = ''
+
+    if request.url.path.startswith('/agent/'):
+        ukey = f"u:{email}:p:{request.url.path}"
+        ikey = f"ip:{ip}:p:{request.url.path}"
+        # Allow bursts, but cap sustained spam.
+        if not _rate_allow(ukey, limit=60, window_s=60):
+            return JSONResponse({'ok': False, 'error': 'rate limited (user)'}, status_code=429)
+        if ip and not _rate_allow(ikey, limit=200, window_s=60):
+            return JSONResponse({'ok': False, 'error': 'rate limited (ip)'}, status_code=429)
+
     return await call_next(request)
 
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
 
+def _wants_html(req: Request) -> bool:
+    # Tauri WebView may send */*; browsers often send text/html in Accept.
+    # If opened in a normal browser, show a friendly page with a link back.
+    a = (req.headers.get('accept') or '').lower()
+    ua = (req.headers.get('user-agent') or '').lower()
+    if 'text/html' in a:
+        return True
+    # If someone hits it directly in a webview and gets stuck, still be nice.
+    if 'tauri' in ua or 'wv' in ua or 'webview' in ua:
+        return True
+    return False
+
+
+def _health_html(title: str, data: dict) -> HTMLResponse:
+    import json
+
+    pretty = json.dumps(data, indent=2)
+    body = f"""<!doctype html>
+<html>
+<head>
+  <meta charset='utf-8' />
+  <meta name='viewport' content='width=device-width, initial-scale=1' />
+  <title>{title}</title>
+  <style>
+    body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 20px; }}
+    .row {{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }}
+    a.btn {{ display:inline-block; padding:8px 12px; border:1px solid #ddd; border-radius:10px; text-decoration:none; color:#111; background:#fafafa; }}
+    a.btn:hover {{ background:#f2f2f2; }}
+    pre {{ background:#0b1020; color:#e7e7e7; padding:12px; border-radius:12px; overflow:auto; }}
+    .subtle {{ color:#666; font-size: 13px; }}
+  </style>
+</head>
+<body>
+  <div class='row'>
+    <a class='btn' href='/agent/fubuki'>Back to Fubuki</a>
+    <a class='btn' href='/weekend/jobs'>Weekend Jobs</a>
+    <span class='subtle'>You’re looking at a health check endpoint.</span>
+  </div>
+  <h1 style='margin:14px 0 10px 0;'>{title}</h1>
+  <pre>{pretty}</pre>
+</body>
+</html>"""
+    return HTMLResponse(body)
+
+
 @app.get("/health")
-def health():
-    return {"ok": True}
+def health(request: Request):
+    data = {"ok": True}
+    if _wants_html(request):
+        return _health_html('Health', data)
+    return data
+
+
+@app.get('/health/full')
+def health_full(request: Request):
+    """Deeper health check for demo readiness."""
+    import os
+    from sqlmodel import text
+
+    out = {
+        'ok': True,
+        'checks': {},
+    }
+
+    # DB check
+    try:
+        with get_session() as s:
+            s.exec(text('select 1')).all()
+        out['checks']['db'] = {'ok': True}
+    except Exception as e:
+        out['checks']['db'] = {'ok': False, 'error': str(e)}
+        out['ok'] = False
+
+    # Secrets check
+    out['checks']['app_secret_key'] = {'ok': bool((settings.app_secret_key or '').strip())}
+
+    # GitHub token check (either per-user stored or global env)
+    email = getattr(request.state, 'user_email', '') or ''
+    gh = None
+    if email:
+        try:
+            gh = get_github_token(email)
+        except Exception:
+            gh = None
+    out['checks']['github_token'] = {'ok': bool((gh or '').strip() or (settings.github_token or '').strip())}
+
+    # Anthropic key check
+    server_key = (os.environ.get('ANTHROPIC_API_KEY') or '').strip()
+    out['checks']['anthropic_key'] = {'ok': bool(server_key)}
+
+    # Anthropic models check (best-effort, only if key present)
+    if server_key:
+        try:
+            api_key = server_key
+            items = anthropic_list_models(api_key=api_key)
+            out['checks']['anthropic_models'] = {'ok': True, 'count': len(items)}
+        except Exception as e:
+            out['checks']['anthropic_models'] = {'ok': False, 'error': str(e)}
+            out['ok'] = False
+    else:
+        out['checks']['anthropic_models'] = {'ok': False, 'error': 'missing key'}
+
+    if _wants_html(request):
+        return _health_html('Health (full)', out)
+    return JSONResponse(out)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -149,6 +417,8 @@ async def session_create(request: Request):
         return resp
 
     claims = verify_supabase_jwt(token)
+    if not claims:
+        claims = await verify_supabase_token_remote(token)
     if not claims:
         return JSONResponse({'ok': False, 'error': 'invalid token'}, status_code=401)
 
@@ -229,6 +499,169 @@ def stack_index(request: Request):
     return templates.TemplateResponse("stack_index.html", {"request": request})
 
 
+@app.get('/usage', response_class=HTMLResponse)
+def usage_page(request: Request):
+    return templates.TemplateResponse('usage.html', {'request': request})
+
+
+# ─────────────────────────────────────────────────────────────
+# Prices (CoinGecko)
+# ─────────────────────────────────────────────────────────────
+_PRICE_CACHE: dict = {"ts": 0.0, "data": None}
+
+
+async def _fetch_top_prices(per_page: int = 25) -> list[dict]:
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {
+        "vs_currency": "usd",
+        "order": "market_cap_desc",
+        "per_page": int(per_page),
+        "page": 1,
+        "sparkline": "true",
+        "price_change_percentage": "24h",
+    }
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(url, params=params, headers={"Accept": "application/json"})
+        r.raise_for_status()
+        data = r.json() if r.content else []
+
+    # CoinGecko returns list of dicts; keep as-is (frontend expects these keys).
+    return data if isinstance(data, list) else []
+
+
+@app.get('/prices', response_class=HTMLResponse)
+def prices_page(request: Request):
+    return templates.TemplateResponse('prices.html', {'request': request})
+
+
+@app.get('/prices.json')
+async def prices_json():
+    # Cache for 30s to avoid rate limits.
+    now = time.time()
+    if _PRICE_CACHE.get('data') is not None and (now - float(_PRICE_CACHE.get('ts') or 0)) < 30:
+        return JSONResponse({'ok': True, 'items': _PRICE_CACHE['data'], 'fetched_at': _PRICE_CACHE.get('fetched_at')})
+
+    try:
+        items = await _fetch_top_prices(per_page=25)
+        fetched_at = __import__('datetime').datetime.utcnow().strftime('%H:%M:%SZ')
+        _PRICE_CACHE['ts'] = now
+        _PRICE_CACHE['data'] = items
+        _PRICE_CACHE['fetched_at'] = fetched_at
+        return JSONResponse({'ok': True, 'items': items, 'fetched_at': fetched_at})
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
+
+
+# Price chart data for a single coin id (CoinGecko).
+_PRICE_CHART_CACHE: dict[tuple[str, int], dict] = {}
+
+
+# ─────────────────────────────────────────────────────────────
+# Derivatives telemetry (Binance Futures public endpoints)
+# ─────────────────────────────────────────────────────────────
+_DERIVS_CACHE: dict[tuple[str, str], dict] = {}
+
+
+def _binance_symbol(sym: str) -> str:
+    s = (sym or '').strip().upper()
+    if s in ('BTC', 'ETH', 'AVAX'):
+        return f"{s}USDT"
+    # allow already-formed symbols
+    return s
+
+
+async def _binance_get(path: str, params: dict | None = None) -> dict | list:
+    url = f"https://fapi.binance.com{path}"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.get(url, params=params or {}, headers={"Accept": "application/json"})
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
+
+@app.get('/derivs/funding.json')
+async def derivs_funding(symbol: str = Query(default='BTC')):
+    sym = _binance_symbol(symbol)
+    key = ('funding', sym)
+    now = time.time()
+    cached = _DERIVS_CACHE.get(key)
+    if cached and (now - float(cached.get('ts') or 0)) < 15:
+        return JSONResponse({'ok': True, 'symbol': sym, **(cached.get('data') or {}), 'cached': True})
+
+    try:
+        # /fapi/v1/premiumIndex includes mark price + lastFundingRate + nextFundingTime
+        data = await _binance_get('/fapi/v1/premiumIndex', params={'symbol': sym})
+        out = {
+            'markPrice': data.get('markPrice'),
+            'lastFundingRate': data.get('lastFundingRate'),
+            'nextFundingTime': data.get('nextFundingTime'),
+            'time': data.get('time'),
+        } if isinstance(data, dict) else {}
+
+        _DERIVS_CACHE[key] = {'ts': now, 'data': out}
+        return JSONResponse({'ok': True, 'symbol': sym, **out, 'cached': False})
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
+
+
+@app.get('/derivs/oi.json')
+async def derivs_open_interest(symbol: str = Query(default='BTC')):
+    sym = _binance_symbol(symbol)
+    key = ('oi', sym)
+    now = time.time()
+    cached = _DERIVS_CACHE.get(key)
+    if cached and (now - float(cached.get('ts') or 0)) < 15:
+        return JSONResponse({'ok': True, 'symbol': sym, **(cached.get('data') or {}), 'cached': True})
+
+    try:
+        data = await _binance_get('/fapi/v1/openInterest', params={'symbol': sym})
+        out = {
+            'openInterest': data.get('openInterest'),
+            'time': data.get('time'),
+        } if isinstance(data, dict) else {}
+
+        _DERIVS_CACHE[key] = {'ts': now, 'data': out}
+        return JSONResponse({'ok': True, 'symbol': sym, **out, 'cached': False})
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
+
+
+@app.get('/prices/{coin_id}.json')
+async def price_chart_json(coin_id: str, days: int = Query(default=7)):
+    cid = (coin_id or '').strip()
+    d = int(days or 7)
+    if d not in (1, 7, 30, 90, 365):
+        d = 7
+
+    key = (cid, d)
+    now = time.time()
+    cached = _PRICE_CHART_CACHE.get(key)
+    if cached and (now - float(cached.get('ts') or 0)) < 60:
+        return JSONResponse({'ok': True, 'coin_id': cid, 'days': d, 'series': cached.get('series') or [], 'fetched_at': cached.get('fetched_at')})
+
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/{cid}/market_chart"
+        params = {"vs_currency": "usd", "days": d}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(url, params=params, headers={"Accept": "application/json"})
+            r.raise_for_status()
+            data = r.json() if r.content else {}
+
+        prices = data.get('prices') if isinstance(data, dict) else []
+        series = []
+        if isinstance(prices, list):
+            for pt in prices:
+                if isinstance(pt, list) and len(pt) >= 2:
+                    ts, px = pt[0], pt[1]
+                    series.append({'t': ts, 'p': px})
+
+        fetched_at = __import__('datetime').datetime.utcnow().strftime('%H:%M:%SZ')
+        _PRICE_CHART_CACHE[key] = {'ts': now, 'series': series, 'fetched_at': fetched_at}
+        return JSONResponse({'ok': True, 'coin_id': cid, 'days': d, 'series': series, 'fetched_at': fetched_at})
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
+
+
 @app.get('/openalex', response_class=HTMLResponse)
 def openalex_index(request: Request):
     return templates.TemplateResponse('openalex.html', {'request': request})
@@ -237,6 +670,40 @@ def openalex_index(request: Request):
 @app.get('/agent/fubuki', response_class=HTMLResponse)
 def fubuki_ui(request: Request):
     return templates.TemplateResponse('fubuki.html', {'request': request})
+
+
+# ─────────────────────────────────────────────────────────────
+# Job Board (Ashby public API)
+# ─────────────────────────────────────────────────────────────
+@app.get('/job-board', response_class=HTMLResponse)
+def job_board_ui(request: Request):
+    return templates.TemplateResponse(
+        'job_board.html',
+        {
+            'request': request,
+            'include_compensation': bool(getattr(settings, 'ashby_include_compensation', False)),
+        },
+    )
+
+
+@app.get('/api/ashby/job-board')
+async def ashby_job_board(includeCompensation: bool = Query(default=False)):
+    board = (getattr(settings, 'ashby_job_board_name', '') or 'ava-labs').strip() or 'ava-labs'
+
+    url = f"https://api.ashbyhq.com/posting-api/job-board/{board}"
+    params = {'includeCompensation': 'true' if includeCompensation else 'false'}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(url, params=params, headers={'Accept': 'application/json'})
+            r.raise_for_status()
+            data = r.json() if r.content else {}
+        if not isinstance(data, dict):
+            return JSONResponse({'ok': False, 'error': 'unexpected response from Ashby'}, status_code=502)
+        # Pass through important fields; keep frontend stable.
+        return JSONResponse({'ok': True, 'boardName': board, **data})
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
 
 
 @app.get('/command', response_class=HTMLResponse)
@@ -406,6 +873,219 @@ def companies_add(name: str = Form('')):
         return RedirectResponse(url='/companies?msg=Invalid+company+name', status_code=303)
 
     return RedirectResponse(url=f'/companies/{c.id}', status_code=303)
+
+
+@app.get('/companies/export.json')
+def companies_export(include_signals: int = Query(default=0)):
+    """Export talent mapping data (companies + comp bands + optional signals) as a JSON download."""
+    from sqlmodel import select
+    import json
+    import datetime
+
+    inc = bool(int(include_signals or 0))
+
+    with get_session() as s:
+        companies = s.exec(select(Company)).all()
+        comp_rows = s.exec(select(CompanyCompBand)).all()
+        sig_rows = s.exec(select(CompanySignal)).all() if inc else []
+
+    payload = {
+        'schema_version': 1,
+        'exported_at': datetime.datetime.utcnow().isoformat() + 'Z',
+        'include_signals': inc,
+        'companies': [jsonable_encoder(c) for c in companies],
+        'comp_bands': [jsonable_encoder(r) for r in comp_rows],
+        'signals': [jsonable_encoder(r) for r in sig_rows] if inc else [],
+    }
+
+    data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    fname = f"talent-mapping-export-{datetime.datetime.utcnow().date().isoformat()}.json"
+    return Response(
+        content=data,
+        media_type='application/json',
+        headers={'Content-Disposition': f'attachment; filename="{fname}"'},
+    )
+
+
+@app.post('/companies/import')
+async def companies_import(
+    request: Request,
+    file: UploadFile = File(...),
+    mode: str = Form('merge'),
+    include_signals: int = Form(0),
+):
+    """Import talent mapping data from an export pack.
+
+    mode:
+      - merge: add missing records, keep existing
+      - replace: wipe companies/comp bands/(signals) then import
+    """
+    from sqlmodel import select
+    import json
+
+    md = (mode or 'merge').strip().lower()
+    if md not in ('merge', 'replace'):
+        md = 'merge'
+
+    inc = bool(int(include_signals or 0))
+
+    raw = await file.read()
+    if not raw:
+        return RedirectResponse(url='/companies?msg=Empty+file', status_code=303)
+
+    try:
+        pack = json.loads(raw.decode('utf-8', errors='replace'))
+    except Exception as e:
+        return RedirectResponse(url='/companies?msg=Invalid+JSON', status_code=303)
+
+    companies_in = pack.get('companies') or []
+    comp_in = pack.get('comp_bands') or []
+    sig_in = pack.get('signals') or []
+
+    if not isinstance(companies_in, list) or not isinstance(comp_in, list):
+        return RedirectResponse(url='/companies?msg=Invalid+pack+format', status_code=303)
+
+    added_companies = 0
+    added_bands = 0
+    added_signals = 0
+
+    with get_session() as s:
+        if md == 'replace':
+            # Wipe mapping tables. (Candidates remain; they are not FK-linked.)
+            for r in s.exec(select(CompanyCompBand)).all():
+                s.delete(r)
+            if inc:
+                for r in s.exec(select(CompanySignal)).all():
+                    s.delete(r)
+            for c in s.exec(select(Company)).all():
+                s.delete(c)
+            s.commit()
+
+        # Build lookup of existing companies by norm_name
+        existing_cos = {c.norm_name: c for c in s.exec(select(Company)).all() if (c.norm_name or '').strip()}
+
+        # Upsert companies
+        id_map: dict[int, int] = {}  # old_id -> new_id
+        for c in companies_in:
+            if not isinstance(c, dict):
+                continue
+            name = (c.get('name') or '').strip()
+            if not name:
+                continue
+            origin = (c.get('origin') or 'manual').strip() or 'manual'
+            obj = upsert_company(s, name, origin=origin)
+            if not obj:
+                continue
+
+            # Copy enrichment fields (best-effort)
+            for k in ('wikidata_id', 'sec_cik', 'github_org_url', 'linkedin_company_url', 'jobs_url', 'tags', 'notes'):
+                if isinstance(c.get(k), str):
+                    setattr(obj, k, c.get(k) or '')
+            if isinstance(c.get('industry_tags'), list):
+                obj.industry_tags = [str(x) for x in c.get('industry_tags') if str(x).strip()]
+            if isinstance(c.get('domains'), list):
+                obj.domains = [str(x) for x in c.get('domains') if str(x).strip()]
+            if isinstance(c.get('comp_json'), dict):
+                obj.comp_json = c.get('comp_json') or {}
+
+            s.add(obj)
+            s.commit()
+
+            old_id = c.get('id')
+            if isinstance(old_id, int):
+                id_map[old_id] = obj.id
+
+            if obj.norm_name not in existing_cos:
+                existing_cos[obj.norm_name] = obj
+                added_companies += 1
+
+        # Existing comp band keys
+        existing_keys: set[tuple] = set()
+        for r in s.exec(select(CompanyCompBand)).all():
+            existing_keys.add((
+                int(r.company_id),
+                (r.dept or ''),
+                (r.role or ''),
+                (r.level or ''),
+                (r.location or ''),
+                (r.currency or ''),
+                int(r.low or 0),
+                int(r.mid or 0),
+                int(r.high or 0),
+                int(getattr(r, 'bonus', 0) or 0),
+                int(getattr(r, 'equity', 0) or 0),
+                (getattr(r, 'source_url', '') or ''),
+            ))
+
+        # Import comp bands
+        for r in comp_in:
+            if not isinstance(r, dict):
+                continue
+            old_cid = r.get('company_id')
+            cid = None
+            if isinstance(old_cid, int) and old_cid in id_map:
+                cid = id_map[old_cid]
+            if not cid:
+                # fallback: try find by company name fields if present
+                continue
+
+            row = CompanyCompBand(
+                company_id=int(cid),
+                dept=(r.get('dept') or 'engineering').strip() or 'engineering',
+                role=(r.get('role') or '').strip(),
+                level=(r.get('level') or '').strip(),
+                location=(r.get('location') or '').strip(),
+                currency=(r.get('currency') or 'USD').strip() or 'USD',
+                low=int(r.get('low') or 0),
+                mid=int(r.get('mid') or 0),
+                high=int(r.get('high') or 0),
+                bonus=int(r.get('bonus') or 0),
+                equity=int(r.get('equity') or 0),
+                source_url=(r.get('source_url') or '').strip(),
+                notes=(r.get('notes') or '').strip(),
+            )
+            key = (
+                row.company_id, row.dept, row.role, row.level, row.location, row.currency,
+                row.low, row.mid, row.high, row.bonus, row.equity, row.source_url,
+            )
+            if key in existing_keys:
+                continue
+            s.add(row)
+            s.commit()
+            existing_keys.add(key)
+            added_bands += 1
+
+        # Import signals (optional)
+        if inc and isinstance(sig_in, list):
+            # Dedup signals by (company_id, signal_type, url)
+            existing_sig = set()
+            for rr in s.exec(select(CompanySignal)).all():
+                existing_sig.add((int(rr.company_id), (rr.signal_type or ''), (rr.url or '')))
+
+            for rr in sig_in:
+                if not isinstance(rr, dict):
+                    continue
+                old_cid = rr.get('company_id')
+                cid = id_map.get(old_cid) if isinstance(old_cid, int) else None
+                if not cid:
+                    continue
+                sig = CompanySignal(
+                    company_id=int(cid),
+                    source=(rr.get('source') or 'manual') or 'manual',
+                    signal_type=(rr.get('signal_type') or '').strip(),
+                    value_json=rr.get('value_json') or {},
+                    url=(rr.get('url') or '').strip(),
+                )
+                sk = (sig.company_id, sig.signal_type, sig.url)
+                if sk in existing_sig:
+                    continue
+                s.add(sig)
+                s.commit()
+                existing_sig.add(sk)
+                added_signals += 1
+
+    msg = f"Imported: {added_companies} companies, {added_bands} comp bands" + (f", {added_signals} signals" if inc else "")
+    return RedirectResponse(url='/companies?msg=' + __import__('urllib.parse').parse.quote(msg), status_code=303)
 
 
 @app.post('/companies/{company_id:int}/delete')
@@ -582,12 +1262,16 @@ async def agent_key_set(request: Request):
 @app.get('/agent/fubuki/modes')
 def fubuki_modes():
     # Source of truth is the embedded UI's MODES; backend expects these keys.
+    # We also expose file-backed modes (HR Helpline / AskFubuki SWE).
     return {
         'source':  {'label': 'SOURCE & EVALUATE',     'desc': "Paste a profile, GitHub URL, or describe who you're hunting"},
         'boolean': {'label': 'BOOLEAN / SEARCH',      'desc': 'Describe the role — returns search strings'},
         'outreach':{'label': 'OUTREACH WRITER',       'desc': 'Describe the candidate and role — returns full sequence'},
         'screen':  {'label': 'SCREEN CANDIDATE',      'desc': 'Specify the role — returns question bank'},
         'fake':    {'label': 'FAKE PROFILE DETECT',   'desc': 'Paste profile text — returns authenticity score + threat check'},
+
+        'hr':         {'label': 'HR HELPDESK',     'desc': 'HR Helpdesk (employment law + visas + CHRO guidance) with the Beta philosophy substrate'},
+        'askfubuki':  {'label': 'ASKFUBUKI',       'desc': 'Staff+ SWE expert for Avalanche/EVM; recruiter-friendly explanations + deep tech'},
     }
 
 
@@ -625,64 +1309,766 @@ async def agent_comp_import_csv_route(request: Request):
 @app.post('/agent/fubuki/dm')
 async def fubuki_dm_route(request: Request):
     # Protected by standard auth middleware (same as other endpoints).
-    data = await request.json()
+    try:
+        data = await _read_json_body(request)
+    except Exception as e:
+        logger.warning('fubuki dm: bad JSON body (%s)', e)
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=400)
+
+    # Prefer server key when present (personal default). Allow per-user header only as fallback.
+    import os
+    server_key = (os.environ.get('ANTHROPIC_API_KEY') or '').strip()
+    api_key = server_key or (request.headers.get('x-anthropic-key') or '').strip() or None
+
     from .agent_fubuki import fubuki_dm
+    # fubuki_dm calls fubuki_call; thread api_key through by temporarily stashing on payload.
+    # (Keeps agent_fubuki.py signature stable.)
+    if api_key:
+        data['_anthropic_api_key'] = api_key
     resp, err = fubuki_dm(data)
+
+    # Best-effort usage logging (if available)
+    meta = data.get('_usage_meta') if isinstance(data, dict) else None
+    if isinstance(meta, dict):
+        _append_usage_log({
+            'kind': 'dm',
+            'owner_email': getattr(request.state, 'user_email', '') or '',
+            'model_used': meta.get('model_used') or '',
+            'input_tokens': meta.get('input_tokens'),
+            'output_tokens': meta.get('output_tokens'),
+        })
+
     if err:
         return JSONResponse({'ok': False, 'error': err}, status_code=400)
     return JSONResponse({'ok': True, 'response': resp or ''})
 
 
-@app.post('/agent/fubuki/query')
-async def fubuki_query(request: Request):
-    # Protected by the same auth middleware as the rest of the app.
-    data = await request.json()
-    mode = (data.get('mode') or '').strip()
-    msg = (data.get('message') or '').strip()
-    hist = data.get('history') or []
-    specs = data.get('active_specs') or []
+def _extract_degen_system_prompt() -> str:
+    """Extract const DEGEN_SYSTEM_PROMPT = `...`; from app/static/sourceress.html."""
+    p = _STATIC_DIR / 'sourceress.html'
+    s = p.read_text(encoding='utf-8', errors='ignore')
 
-    if mode not in ('source', 'boolean', 'outreach', 'screen', 'fake'):
-        return JSONResponse({'ok': False, 'error': 'invalid mode'}, status_code=400)
-    if not msg:
-        return JSONResponse({'ok': False, 'error': 'missing message'}, status_code=400)
+    token = 'const DEGEN_SYSTEM_PROMPT'
+    start = s.find(token)
+    if start < 0:
+        raise RuntimeError('DEGEN_SYSTEM_PROMPT not found in sourceress.html')
 
-    # Load system prompt from the embedded HTML at runtime (single source of truth)
-    # This avoids duplicating prompts in Python and drifting.
-    try:
-        import re
-        import pathlib
-        p = pathlib.Path('app/static/sourceress.html')
-        html = p.read_text(encoding='utf-8', errors='ignore')
-        # Find mode block: modeName: { ... system: `...` }
-        m = re.search(rf"{mode}\s*:\s*\{{[^}}]*?system\s*:\s*`(.*?)`\s*,", html, flags=re.DOTALL)
-        if not m:
-            return JSONResponse({'ok': False, 'error': 'system prompt not found'}, status_code=500)
-        system = m.group(1)
-    except Exception as e:
-        return JSONResponse({'ok': False, 'error': f'failed to load prompt: {e}'}, status_code=500)
+    eq = s.find('=', start)
+    if eq < 0:
+        raise RuntimeError('DEGEN_SYSTEM_PROMPT assignment not found')
 
-    if specs and isinstance(specs, list):
-        system = system + "\n\nActive specialization context: " + ", ".join([str(s).strip() for s in specs if str(s).strip()])
+    i = s.find('`', eq)
+    if i < 0:
+        raise RuntimeError('DEGEN_SYSTEM_PROMPT opening backtick not found')
 
-    # Normalize history
-    messages = []
-    if isinstance(hist, list):
-        for h in hist:
-            if not isinstance(h, dict):
+    # scan template literal
+    i += 1
+    j = i
+    while j < len(s):
+        c = s[j]
+        if c == '\\':
+            j += 2
+            continue
+        if c == '`':
+            return s[i:j]
+        j += 1
+
+    raise RuntimeError('unterminated DEGEN_SYSTEM_PROMPT template literal')
+
+
+def _extract_fubuki_system_prompts() -> dict[str, str]:
+    """Extract system prompts from app/static/sourceress.html.
+
+    The UI owns the prompt text in JS:
+      const MODES = { source: { ..., system: `...` }, ... };
+
+    These template literals are *huge* (thousands of chars) and may contain braces/newlines,
+    so regex-only parsing is fragile. We do a small, purpose-built scanner:
+    - locate the MODES object
+    - brace-match to get its full text
+    - for each mode, find "system: `" then parse a JS template literal until the closing backtick
+      (handling escaped \`)
+    """
+
+    MODES_START = 'const MODES'
+
+    p = _STATIC_DIR / 'sourceress.html'
+    s = p.read_text(encoding='utf-8', errors='ignore')
+
+    start = s.find(MODES_START)
+    if start < 0:
+        raise RuntimeError('const MODES not found in sourceress.html')
+
+    # Find the opening '{' of the MODES object (after the '=')
+    eq = s.find('=', start)
+    if eq < 0:
+        raise RuntimeError('MODES assignment not found')
+    i = eq
+    while i < len(s) and s[i] != '{':
+        i += 1
+    if i >= len(s) or s[i] != '{':
+        raise RuntimeError('MODES object opening { not found')
+
+    # Brace-match the MODES object, while skipping over quoted strings and template literals.
+    def _scan_string(pos: int, quote: str) -> int:
+        pos += 1
+        while pos < len(s):
+            c = s[pos]
+            if c == '\\':
+                pos += 2
                 continue
-            r = (h.get('role') or '').strip()
-            c = (h.get('content') or '').strip()
-            if r in ('user', 'assistant') and c:
-                messages.append({'role': r, 'content': c})
-    messages.append({'role': 'user', 'content': msg})
+            if c == quote:
+                return pos + 1
+            pos += 1
+        raise RuntimeError('unterminated string literal in sourceress.html')
 
+    def _scan_template(pos: int) -> int:
+        # s[pos] == '`'
+        pos += 1
+        while pos < len(s):
+            c = s[pos]
+            if c == '\\':
+                pos += 2
+                continue
+            if c == '`':
+                return pos + 1
+            pos += 1
+        raise RuntimeError('unterminated template literal in sourceress.html')
+
+    depth = 0
+    j = i
+    while j < len(s):
+        c = s[j]
+        if c in ('"', "'"):
+            j = _scan_string(j, c)
+            continue
+        if c == '`':
+            j = _scan_template(j)
+            continue
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                # include closing brace
+                j += 1
+                break
+        j += 1
+
+    if depth != 0:
+        raise RuntimeError('failed to parse MODES object (brace mismatch)')
+
+    block = s[i:j]
+
+    def _find_mode_key(from_pos: int, mode: str) -> int:
+        """Find the position of the mode key inside the MODES object.
+
+        We avoid naive .find(mode) because mode words can appear inside the prompt text.
+        We look for patterns like:
+          \n  source: {
+          {source: {
+        """
+        patterns = [f"\n{mode}", f"\n {mode}", f"\n  {mode}", f"{{{mode}", f"{{ {mode}"]
+        pos = from_pos
+        while True:
+            hit = -1
+            for pat in patterns:
+                h = block.find(pat, pos)
+                if h >= 0 and (hit < 0 or h < hit):
+                    hit = h
+            if hit < 0:
+                return -1
+
+            # Normalize to start of the mode token
+            if block[hit] == '{':
+                k = hit + 1
+                while k < len(block) and block[k] == ' ':
+                    k += 1
+            else:
+                k = hit + 1  # skip leading '\n'
+                while k < len(block) and block[k] == ' ':
+                    k += 1
+
+            if not block.startswith(mode, k):
+                pos = hit + 1
+                continue
+
+            t = k + len(mode)
+            # Skip whitespace then require ':'
+            while t < len(block) and block[t] in (' ', '\t', '\r'):
+                t += 1
+            if t < len(block) and block[t] == ':':
+                return k
+
+            pos = hit + 1
+
+    def _extract_mode_system_between(start_k: int, end_k: int, mode: str) -> str:
+        seg = block[start_k:end_k]
+        sys_key = 'system:'
+        sys_pos = seg.find(sys_key)
+        if sys_pos < 0:
+            raise RuntimeError(f'system key not found for mode={mode}')
+        bt = seg.find('`', sys_pos)
+        if bt < 0:
+            raise RuntimeError(f'opening backtick not found for mode={mode}')
+        # Scan to closing backtick, respecting escapes
+        pos = bt + 1
+        while pos < len(seg):
+            c = seg[pos]
+            if c == '\\':
+                pos += 2
+                continue
+            if c == '`':
+                return seg[bt + 1:pos]
+            pos += 1
+        raise RuntimeError(f'unterminated system template literal for mode={mode}')
+
+    modes = ('source', 'boolean', 'outreach', 'screen', 'fake')
+    key_pos: dict[str, int] = {}
+    search_pos = 0
+    for mode in modes:
+        k = _find_mode_key(search_pos, mode)
+        if k < 0:
+            raise RuntimeError(f'mode not found in MODES: {mode}')
+        key_pos[mode] = k
+        search_pos = k + len(mode)
+
+    out: dict[str, str] = {}
+    for idx, mode in enumerate(modes):
+        start_k = key_pos[mode]
+        end_k = key_pos[modes[idx + 1]] if idx + 1 < len(modes) else len(block)
+        out[mode] = _extract_mode_system_between(start_k, end_k, mode)
+
+    return out
+
+
+def _read_prompt_file(name: str) -> str:
+    """Read a prompt markdown file from app/prompts/.
+
+    These are user-editable prompt layers that should ship with the backend bundle.
+    """
+    name = (name or '').strip()
+    if not name:
+        return ''
+    p = _APP_DIR / 'prompts' / name
+    if not p.exists():
+        return ''
+    return p.read_text(encoding='utf-8', errors='ignore').strip()
+
+
+def _compact_prompt_text(md: str) -> str:
+    """Trim markdown-ish formatting to reduce token count.
+
+    Goal: keep meaning, drop visual structure: headings, horizontal rules, tables.
+    """
+    import re
+
+    md = (md or '').replace('\r\n', '\n')
+    if not md.strip():
+        return ''
+
+    out_lines: list[str] = []
+    for ln in md.split('\n'):
+        s = ln.strip()
+        if not s:
+            out_lines.append('')
+            continue
+        # Drop markdown headings
+        if s.startswith('#'):
+            continue
+        # Drop horizontal rules
+        if s in ('---', '—', '–––') or re.fullmatch(r"[-—_]{3,}", s or ''):
+            continue
+        # Drop table separator rows and dense table rows (pipes)
+        if '|' in s:
+            # Skip typical markdown table separator lines
+            if re.fullmatch(r"\|?\s*[:-]+\s*(\|\s*[:-]+\s*)+\|?", s):
+                continue
+            # Skip most table rows; these are usually redundant for prose.
+            # Keep if it's clearly not a table (rare).
+            if s.count('|') >= 2:
+                continue
+        out_lines.append(ln)
+
+    # Collapse multiple blank lines
+    txt = '\n'.join(out_lines)
+    txt = re.sub(r"\n{3,}", "\n\n", txt)
+    return txt.strip()
+
+
+def _file_prompt_for_mode(mode: str) -> str:
+    """Lazy-load only the prompt files needed for the requested mode."""
+    mode = (mode or '').strip().lower()
+
+    if mode in ('askfubuki', 'swe'):
+        return _compact_prompt_text(_read_prompt_file('askfubuki_swe_knowledge_base.md'))
+
+    # Beta toggle removed: philosophy layer is only used as a substrate for HR.
+
+    if mode in ('hr',):
+        beta = _compact_prompt_text(_read_prompt_file('fubuki_beta_philosophy_layer.md'))
+        hr_base = _compact_prompt_text(_read_prompt_file('fubuki_hr_helpline_persona.md'))
+        hr_add = _compact_prompt_text(_read_prompt_file('fubuki_hr_behavioral_science_addendum.md'))
+        hr_layer = (hr_base + '\n\n' + hr_add).strip() if (hr_base and hr_add) else (hr_base or hr_add)
+        if beta and hr_layer:
+            return (beta + '\n\n' + hr_layer).strip()
+        return (hr_layer or beta or '').strip()
+
+    return ''
+
+
+def _file_backed_fubuki_prompts() -> dict[str, str]:
+    """Small index for debug/UI listing.
+
+    NOTE: keep this lightweight; actual query path uses lazy loading.
+    """
+    out: dict[str, str] = {}
+    for k in ('hr', 'askfubuki', 'swe'):
+        p = _file_prompt_for_mode(k)
+        if p:
+            out[k] = p
+
+    # Add-ons / frameworks are not "modes", but we expose them for debugging.
+    fw = _compact_prompt_text(_read_prompt_file('ava_labs_technical_pm_framework.md'))
+    if fw:
+        out['ava_labs_technical_pm_framework'] = fw
+
+    return out
+
+
+def _extract_md_section(md: str, header: str) -> str:
+    """Extract a markdown section by exact header line (e.g. '## ORG LEARNING — ...').
+
+    Returns content from the header line until the next same-level header (## ...).
+    """
+    md = md or ''
+    if not md.strip() or not header:
+        return ''
+
+    lines = md.splitlines()
+    start = -1
+    for i, ln in enumerate(lines):
+        if ln.strip() == header.strip():
+            start = i
+            break
+    if start < 0:
+        return ''
+
+    out = []
+    for j in range(start, len(lines)):
+        ln = lines[j]
+        if j > start and ln.startswith('## '):
+            break
+        out.append(ln)
+    return ('\n'.join(out)).strip()
+
+
+def _role_auto_layers(msg: str, hist: list[dict] | None = None) -> dict[str, str]:
+    """Return auto-injected layers based on detected role/context.
+
+    Important: lazy-load big files only when needed.
+    """
+    blob = (msg or '')
+    if isinstance(hist, list):
+        for h in hist[-6:]:
+            if isinstance(h, dict):
+                blob += '\n' + str(h.get('content') or '')
+    t = blob.lower()
+
+    # Trigger checks first (avoid loading framework unnecessarily)
+    is_pmish = ('technical pm' in t) or ('technical product management' in t) or ('product management' in t)
+    is_senior = any(x in t for x in ('director', 'vp', 'head', 'principal', 'senior', 'staff'))
+    is_ava_dir_tech_pm = ('director of technical product management' in t) or ('director technical pm' in t) or ('director of technical pm' in t)
+
+    if not (is_ava_dir_tech_pm or (is_pmish and is_senior)):
+        return {}
+
+    framework = _compact_prompt_text(_read_prompt_file('ava_labs_technical_pm_framework.md'))
+    if not framework:
+        return {}
+
+    out: dict[str, str] = {}
+
+    # Org learning becomes general recruiting intelligence for any senior technical PM role.
+    if is_pmish and is_senior:
+        org_learning = _extract_md_section(framework, '## ORG LEARNING — WHAT THIS FRAMEWORK TEACHES US')
+        if org_learning:
+            out['pm_org_learning'] = org_learning
+
+    # Director of Technical PM at Ava Labs: inject full framework.
+    if is_ava_dir_tech_pm:
+        out['ava_director_technical_pm_framework'] = framework
+
+    return out
+
+
+def _system_block(text: str, cache: bool = False) -> dict:
+    b = {"type": "text", "text": (text or '').strip()}
+    if cache and b["text"]:
+        b["cache_control"] = {"type": "ephemeral"}
+    return b
+
+
+def _fubuki_system_blocks_for_mode(mode: str, msg: str = '', hist: list[dict] | None = None) -> list[dict]:
+    """Return Anthropic system blocks with per-layer caching.
+
+    - File-backed persona layers are cached as their own blocks.
+    - Embedded MODES are cached as a block (static in practice).
+    - Auto role layers (like Technical PM framework) are cached as their own blocks,
+      and only loaded when their trigger fires.
+    """
+    blocks: list[dict] = []
+
+    # 1) Base mode content (file-backed OR embedded)
+    base = _file_prompt_for_mode(mode)
+    if base:
+        blocks.append(_system_block(base, cache=True))
+    else:
+        embedded = (_extract_fubuki_system_prompts().get(mode) or '').strip()
+        if embedded:
+            blocks.append(_system_block(embedded, cache=True))
+
+    # 2) Auto-injected role layers
+    if msg:
+        layers = _role_auto_layers(msg=msg, hist=hist)
+        for _k, v in (layers or {}).items():
+            if v and v.strip():
+                blocks.append(_system_block(v, cache=True))
+
+    # Filter empties
+    return [b for b in blocks if (b.get('text') or '').strip()]
+
+
+@app.get('/agent/fubuki/debug')
+def fubuki_debug_prompts():
+    if (settings.env or 'dev') == 'prod':
+        return JSONResponse({'ok': False, 'error': 'not found'}, status_code=404)
+    """Debug endpoint: returns system prompts for each mode.
+
+    Includes:
+    - extracted prompts from sourceress.html MODES
+    - file-backed prompts (HR/AskFubuki SWE)
+    """
     try:
-        out = fubuki_call(system=system, messages=messages, max_tokens=1500)
+        extracted = _extract_fubuki_system_prompts()
+        file_backed = _file_backed_fubuki_prompts()
+
+        merged = dict(extracted)
+        merged.update(file_backed)
+
+        return JSONResponse({
+            'ok': True,
+            'modes': {
+                k: {
+                    'len': len(v or ''),
+                    'source': ('file' if k in file_backed else 'embedded'),
+                    'system': v,
+                }
+                for k, v in merged.items()
+            },
+        })
+    except Exception as e:
+        logger.exception('fubuki debug failed')
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
+
+
+@app.post('/agent/fubuki/debug/blocks')
+async def fubuki_debug_blocks(request: Request):
+    if (settings.env or 'dev') == 'prod':
+        return JSONResponse({'ok': False, 'error': 'not found'}, status_code=404)
+    """Debug endpoint: return Anthropic system blocks for a request.
+
+    Use this to verify lazy-loading + per-layer caching.
+
+    Body: { mode, message, history?, active_specs?, preset? }
+    """
+    try:
+        data = await _read_json_body(request)
+        mode = (data.get('mode') or '').strip()
+        msg = (data.get('message') or '').strip()
+        hist = data.get('history') or []
+        specs = data.get('active_specs') or []
+        preset = (data.get('preset') or 'recruiting').strip().lower()
+
+        if mode not in ('source', 'boolean', 'outreach', 'screen', 'fake', 'hr', 'askfubuki'):
+            return JSONResponse({'ok': False, 'error': 'invalid mode'}, status_code=400)
+        if not msg:
+            return JSONResponse({'ok': False, 'error': 'missing message'}, status_code=400)
+        if preset not in ('recruiting', 'degen'):
+            preset = 'recruiting'
+
+        blocks = _fubuki_system_blocks_for_mode(mode, msg=msg, hist=hist)
+        if preset == 'degen':
+            blocks = [_system_block(_extract_degen_system_prompt(), cache=True)]
+        else:
+            import re
+            for i, b in enumerate(blocks):
+                txt = b.get('text') or ''
+                txt2 = re.sub(
+                    r"\[DEGEN_MODE_START\].*?\[DEGEN_MODE_END\]",
+                    "",
+                    txt,
+                    flags=re.DOTALL,
+                ).strip()
+                blocks[i] = {**b, 'text': txt2}
+
+            if specs and isinstance(specs, list):
+                spec_txt = ", ".join([str(s).strip() for s in specs if str(s).strip()])
+                if spec_txt:
+                    blocks.append(_system_block("Active specialization context: " + spec_txt, cache=False))
+
+        out_blocks = []
+        for b in blocks:
+            txt = (b.get('text') or '')
+            out_blocks.append({
+                'len': len(txt),
+                'cached': bool(isinstance(b.get('cache_control'), dict) and b['cache_control'].get('type') == 'ephemeral'),
+                'preview': (txt[:200] + ('…' if len(txt) > 200 else '')),
+            })
+
+        return JSONResponse({
+            'ok': True,
+            'mode': mode,
+            'preset': preset,
+            'block_count': len(out_blocks),
+            'total_chars': sum([x['len'] for x in out_blocks]),
+            'blocks': out_blocks,
+        })
+
+    except Exception as e:
+        logger.exception('fubuki debug blocks failed')
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
+
+
+@app.get('/agent/fubuki/models')
+def fubuki_models(request: Request):
+    if (settings.env or 'dev') == 'prod':
+        return JSONResponse({'ok': False, 'error': 'not found'}, status_code=404)
+    """List Anthropic models available to the provided key.
+
+    If header `x-anthropic-key` is provided, uses that key.
+    Otherwise falls back to server env ANTHROPIC_API_KEY.
+    """
+    try:
+        import os
+        server_key = (os.environ.get('ANTHROPIC_API_KEY') or '').strip()
+        api_key = server_key or (request.headers.get('x-anthropic-key') or '').strip() or None
+        items = anthropic_list_models(api_key=api_key)
+        # Return a trimmed view to keep payload small.
+        return JSONResponse({
+            'ok': True,
+            'models': [
+                {
+                    'id': m.get('id'),
+                    'display_name': m.get('display_name'),
+                    'created_at': m.get('created_at'),
+                    'type': m.get('type'),
+                }
+                for m in items
+                if isinstance(m, dict)
+            ],
+        })
+    except Exception as e:
+        logger.exception('fubuki models failed')
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
+
+
+@app.get('/agent/fubuki/usage')
+def fubuki_usage(limit: int = 50):
+    if (settings.env or 'dev') == 'prod':
+        return JSONResponse({'ok': False, 'error': 'not found'}, status_code=404)
+    """Return recent usage records + aggregates.
+
+    Computes averages by mode/preset/kind and estimates $ using a simple model.
+    Price numbers are configurable via env vars.
+    """
+    try:
+        import json
+        import pathlib
+        import os
+
+        lim = max(1, min(int(limit or 50), 5000))
+        p = _data_dir() / 'fubuki-usage.jsonl'
+        if not p.exists():
+            return JSONResponse({'ok': True, 'items': [], 'summary': {}})
+
+        # Pricing (USD per 1M tokens). Defaults are placeholders; override via env.
+        # Example:
+        #   FUBUKI_COST_IN_PER_M=3
+        #   FUBUKI_COST_OUT_PER_M=15
+        cost_in_per_m = float(os.environ.get('FUBUKI_COST_IN_PER_M', '3') or 3)
+        cost_out_per_m = float(os.environ.get('FUBUKI_COST_OUT_PER_M', '15') or 15)
+
+        # Read last N lines
+        lines: list[str] = []
+        with p.open('r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if line.strip():
+                    lines.append(line)
+        lines = lines[-lim:]
+
+        items: list[dict] = []
+        for ln in lines:
+            try:
+                o = json.loads(ln)
+                if isinstance(o, dict):
+                    items.append(o)
+            except Exception:
+                continue
+
+        def _n(x):
+            try:
+                return int(x)
+            except Exception:
+                return 0
+
+        def _est_cost(inp: int, outp: int) -> float:
+            return (inp / 1_000_000.0) * cost_in_per_m + (outp / 1_000_000.0) * cost_out_per_m
+
+        # Aggregate by (kind, mode, preset)
+        agg: dict[tuple[str, str, str], dict] = {}
+        total_in = total_out = 0
+        total_cost = 0.0
+
+        for it in items:
+            kind = str(it.get('kind') or '')
+            mode = str(it.get('mode') or '')
+            preset = str(it.get('preset') or '')
+            inp = _n(it.get('input_tokens'))
+            outp = _n(it.get('output_tokens'))
+            c = _est_cost(inp, outp)
+
+            total_in += inp
+            total_out += outp
+            total_cost += c
+
+            k = (kind, mode, preset)
+            a = agg.setdefault(k, {'n': 0, 'input_tokens': 0, 'output_tokens': 0, 'est_cost_usd': 0.0})
+            a['n'] += 1
+            a['input_tokens'] += inp
+            a['output_tokens'] += outp
+            a['est_cost_usd'] += c
+
+        by_key = []
+        for (kind, mode, preset), a in sorted(agg.items(), key=lambda kv: kv[1]['est_cost_usd'], reverse=True):
+            n = a['n'] or 1
+            by_key.append({
+                'kind': kind,
+                'mode': mode,
+                'preset': preset,
+                'n': a['n'],
+                'avg_input_tokens': int(a['input_tokens'] / n),
+                'avg_output_tokens': int(a['output_tokens'] / n),
+                'avg_est_cost_usd': round(a['est_cost_usd'] / n, 6),
+                'total_est_cost_usd': round(a['est_cost_usd'], 6),
+            })
+
+        summary = {
+            'pricing': {
+                'cost_in_per_m': cost_in_per_m,
+                'cost_out_per_m': cost_out_per_m,
+            },
+            'total': {
+                'n': len(items),
+                'input_tokens': total_in,
+                'output_tokens': total_out,
+                'est_cost_usd': round(total_cost, 6),
+            },
+            'by_key': by_key,
+        }
+
+        return JSONResponse({'ok': True, 'items': items[-50:], 'summary': summary})
     except Exception as e:
         return JSONResponse({'ok': False, 'error': str(e)}, status_code=500)
 
-    return JSONResponse({'mode': mode, 'response': out, 'mode_label': mode.upper()})
+
+@app.post('/agent/fubuki/query')
+async def fubuki_query(request: Request):
+    # Protected by the same auth middleware as the rest of the app.
+    try:
+        data = await _read_json_body(request)
+        mode = (data.get('mode') or '').strip()
+        msg = (data.get('message') or '').strip()
+        hist = data.get('history') or []
+        specs = data.get('active_specs') or []
+
+        if mode not in ('source', 'boolean', 'outreach', 'screen', 'fake', 'hr', 'askfubuki'):
+            return JSONResponse({'ok': False, 'error': 'invalid mode'}, status_code=400)
+        if not msg:
+            return JSONResponse({'ok': False, 'error': 'missing message'}, status_code=400)
+
+        system_blocks = _fubuki_system_blocks_for_mode(mode, msg=msg, hist=hist)
+        if not system_blocks:
+            return JSONResponse({'ok': False, 'error': f'system prompt missing for mode={mode}'}, status_code=500)
+
+        # Get preset from request (default to 'recruiting' to save tokens)
+        preset = (data.get('preset') or 'recruiting').strip().lower()
+        if preset not in ('recruiting', 'degen'):
+            preset = 'recruiting'
+
+        if preset == 'degen':
+            # Completely separate prompt: ignore MODES prompt and use DEGEN_SYSTEM_PROMPT.
+            system_blocks = [_system_block(_extract_degen_system_prompt(), cache=True)]
+        else:
+            # Strip degen section if in recruiting mode (if markers exist)
+            import re
+            for i, b in enumerate(system_blocks):
+                txt = b.get('text') or ''
+                txt2 = re.sub(
+                    r"\[DEGEN_MODE_START\].*?\[DEGEN_MODE_END\]",
+                    "",
+                    txt,
+                    flags=re.DOTALL,
+                ).strip()
+                system_blocks[i] = {**b, 'text': txt2}
+
+            if specs and isinstance(specs, list):
+                spec_txt = ", ".join([str(s).strip() for s in specs if str(s).strip()])
+                if spec_txt:
+                    # Dynamic block: do NOT cache.
+                    system_blocks.append(_system_block("Active specialization context: " + spec_txt, cache=False))
+
+        # Normalize history
+        messages = []
+        if isinstance(hist, list):
+            for h in hist:
+                if not isinstance(h, dict):
+                    continue
+                r = (h.get('role') or '').strip()
+                c = (h.get('content') or '').strip()
+                if r in ('user', 'assistant') and c:
+                    messages.append({'role': r, 'content': c})
+        messages.append({'role': 'user', 'content': msg})
+
+        # Prefer server key when present (personal default). Allow per-user header only as fallback.
+        import os
+        server_key = (os.environ.get('ANTHROPIC_API_KEY') or '').strip()
+        api_key = server_key or (request.headers.get('x-anthropic-key') or '').strip() or None
+        out, meta = fubuki_call_ex(system_blocks=system_blocks, messages=messages, max_tokens=1500, api_key=api_key)
+
+        _append_usage_log({
+            'kind': 'query',
+            'mode': mode,
+            'preset': preset,
+            'owner_email': getattr(request.state, 'user_email', '') or '',
+            'model_used': meta.get('model_used') or '',
+            'input_tokens': meta.get('input_tokens'),
+            'output_tokens': meta.get('output_tokens'),
+        })
+
+        # Frontend expects { ok: true, response: "..." } (and may ignore additional fields).
+        return JSONResponse({'ok': True, 'mode': mode, 'response': out, 'mode_label': mode.upper()})
+
+    except Exception as e:
+        # If body parsing failed, make it a 400 (client error) not a 500.
+        msg = str(e)
+        if 'invalid JSON body' in msg or 'empty request body' in msg:
+            logger.warning('fubuki query: bad JSON body (%s)', msg)
+            return JSONResponse({'ok': False, 'error': msg}, status_code=400)
+
+        # Otherwise return the actual exception to make debugging 500s painless.
+        logger.exception('fubuki query failed')
+        return JSONResponse({'ok': False, 'error': msg}, status_code=500)
 
 
 @app.post('/companies/{company_id:int}/tags')
@@ -2146,3 +3532,208 @@ def projects_set_status(
         s.commit()
 
     return JSONResponse({"ok": True})
+
+
+
+# ─────────────────────────────────────────────────────────────
+# Weekend Mode (batch upload scaffolding)
+# ─────────────────────────────────────────────────────────────
+from .services.weekend_jobs_service import (
+    create_job as _wk_create_job,
+    add_upload_artifact as _wk_add_upload_artifact,
+    expand_zip_uploads as _wk_expand_zip_uploads,
+    list_jobs as _wk_list_jobs,
+    get_job as _wk_get_job,
+    get_job_artifacts as _wk_get_job_artifacts,
+    set_job_status as _wk_set_job_status,
+    job_root as _wk_job_root,
+)
+from .weekend_jobs_model import WeekendArtifact
+from .services.weekend_anthropic_batch_service import (
+    submit_batch as _wk_submit_batch,
+    poll_batch as _wk_poll_batch,
+)
+
+
+@app.get('/weekend/jobs', response_class=HTMLResponse)
+def weekend_jobs_page(request: Request):
+    return templates.TemplateResponse('weekend_jobs.html', {'request': request})
+
+
+@app.get('/weekend/jobs/{job_id:int}', response_class=HTMLResponse)
+def weekend_job_detail_page(request: Request, job_id: int):
+    with get_session() as s:
+        job = _wk_get_job(s, job_id)
+        if not job:
+            return HTMLResponse('job not found', status_code=404)
+        artifacts = _wk_get_job_artifacts(s, job_id)
+    return templates.TemplateResponse('weekend_job_detail.html', {'request': request, 'job': job, 'artifacts': artifacts})
+
+
+@app.get('/api/weekend/jobs')
+def weekend_jobs_list_api(limit: int = 50):
+    with get_session() as s:
+        jobs = _wk_list_jobs(s, limit=limit)
+    return JSONResponse({'ok': True, 'jobs': [j.model_dump() for j in jobs]})
+
+
+@app.post('/api/weekend/jobs')
+async def weekend_jobs_create_api(
+    request: Request,
+    title: str = Form(''),
+    notes: str = Form(''),
+    files: list[UploadFile] = File(default_factory=list),
+):
+    if not files:
+        return JSONResponse({'ok': False, 'error': 'no files uploaded'}, status_code=400)
+
+    owner_email = getattr(request.state, 'user_email', '') or ''
+
+    # Extra-paranoid limits to keep demo builds resilient.
+    MAX_FILE_BYTES = 20 * 1024 * 1024   # 20 MiB per uploaded file
+    MAX_TOTAL_BYTES = 50 * 1024 * 1024  # 50 MiB per request
+
+    total = 0
+
+    with get_session() as s:
+        job = _wk_create_job(s, owner_email=owner_email, title=title, notes=notes)
+        for f in files:
+            data = await f.read()
+            sz = len(data or b'')
+            total += sz
+            if sz > MAX_FILE_BYTES:
+                return JSONResponse({'ok': False, 'error': f'file too large: {f.filename} ({sz} bytes), limit is {MAX_FILE_BYTES}'}, status_code=413)
+            if total > MAX_TOTAL_BYTES:
+                return JSONResponse({'ok': False, 'error': f'total upload too large ({total} bytes), limit is {MAX_TOTAL_BYTES}'}, status_code=413)
+
+            _wk_add_upload_artifact(
+                s,
+                job_id=job.id,
+                filename=f.filename or 'file',
+                content_type=(f.content_type or ''),
+                data=data,
+            )
+        _wk_expand_zip_uploads(s, job_id=job.id)
+
+    return JSONResponse({'ok': True, 'job_id': job.id})
+
+
+@app.get('/api/weekend/jobs/{job_id:int}')
+def weekend_jobs_get_api(job_id: int):
+    with get_session() as s:
+        job = _wk_get_job(s, job_id)
+        if not job:
+            return JSONResponse({'ok': False, 'error': 'job not found'}, status_code=404)
+        artifacts = _wk_get_job_artifacts(s, job_id)
+    return JSONResponse({'ok': True, 'job': job.model_dump(), 'artifacts': [a.model_dump() for a in artifacts]})
+
+
+@app.post('/api/weekend/jobs/{job_id:int}/status')
+async def weekend_jobs_set_status_api(job_id: int, request: Request):
+    try:
+        body = await _read_json_body(request)
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=400)
+
+    status = (body.get('status') or '').strip().lower()
+    if status not in ('queued', 'processing', 'done', 'error'):
+        return JSONResponse({'ok': False, 'error': 'invalid status'}, status_code=400)
+    err = (body.get('error') or '').strip()
+
+    with get_session() as s:
+        job = _wk_set_job_status(s, job_id, status, error=err)
+        if not job:
+            return JSONResponse({'ok': False, 'error': 'job not found'}, status_code=404)
+    return JSONResponse({'ok': True, 'job': job.model_dump()})
+
+
+@app.get('/api/weekend/jobs/{job_id:int}/artifacts/{artifact_id:int}/download')
+def weekend_jobs_download_artifact(job_id: int, artifact_id: int):
+    from fastapi.responses import FileResponse
+
+    with get_session() as s:
+        job = _wk_get_job(s, job_id)
+        if not job:
+            return JSONResponse({'ok': False, 'error': 'job not found'}, status_code=404)
+        art = s.get(WeekendArtifact, artifact_id)
+        if not art or art.job_id != job_id:
+            return JSONResponse({'ok': False, 'error': 'artifact not found'}, status_code=404)
+        root = _wk_job_root(job_id)
+        path = (root / (art.rel_path or '')).resolve()
+        # Extra-paranoid: ensure artifact path stays inside the job root.
+        try:
+            if root.resolve() not in path.parents and path != root.resolve():
+                return JSONResponse({'ok': False, 'error': 'invalid artifact path'}, status_code=400)
+        except Exception:
+            return JSONResponse({'ok': False, 'error': 'invalid artifact path'}, status_code=400)
+        if not path.exists():
+            return JSONResponse({'ok': False, 'error': 'file missing on disk'}, status_code=404)
+        return FileResponse(path, filename=art.filename or path.name, media_type=art.content_type or 'application/octet-stream')
+
+
+@app.post('/api/weekend/jobs/{job_id:int}/batch/submit')
+async def weekend_jobs_submit_batch_api(job_id: int, request: Request):
+    """Submit a Weekend job to Anthropic Batch API.
+
+    Uses ANTHROPIC_API_KEY from the backend environment.
+    """
+    try:
+        body = await _read_json_body(request)
+    except Exception:
+        body = {}
+
+    model = (body.get('model') or '').strip()
+    max_tokens = int(body.get('max_tokens') or 1200)
+
+    with get_session() as s:
+        try:
+            job = _wk_submit_batch(s, job_id=job_id, model=model or None, max_tokens=max_tokens)
+        except Exception as e:
+            return JSONResponse({'ok': False, 'error': str(e)}, status_code=400)
+
+    return JSONResponse({'ok': True, 'job': job.model_dump()})
+
+
+@app.post('/api/weekend/jobs/{job_id:int}/batch/poll')
+def weekend_jobs_poll_batch_api(job_id: int):
+    with get_session() as s:
+        try:
+            out = _wk_poll_batch(s, job_id=job_id)
+        except Exception as e:
+            return JSONResponse({'ok': False, 'error': str(e)}, status_code=400)
+
+    return JSONResponse({'ok': True, **out})
+
+
+# ─────────────────────────────────────────────────────────────
+# Doc import into Fubuki main chat
+# ─────────────────────────────────────────────────────────────
+from .services.doc_import_service import extract_text_from_upload
+
+
+@app.post('/agent/fubuki/import_doc')
+async def fubuki_import_doc(file: UploadFile = File(...), max_chars: int = Form(120_000)):
+    # Basic safety: limit upload size to keep demo builds resilient.
+    # (Users can still import large docs by raising the limit later.)
+    data = await file.read()
+    MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
+    if data and len(data) > MAX_BYTES:
+        return JSONResponse({'ok': False, 'error': f'file too large ({len(data)} bytes), limit is {MAX_BYTES}'}, status_code=413)
+    try:
+        text = extract_text_from_upload(file.filename or 'file', data)
+    except Exception as e:
+        return JSONResponse({'ok': False, 'error': str(e)}, status_code=400)
+
+    max_chars = int(max(10_000, min(int(max_chars or 120_000), 500_000)))
+    truncated = False
+    if len(text) > max_chars:
+        text = text[:max_chars]
+        truncated = True
+
+    return JSONResponse({
+        'ok': True,
+        'filename': file.filename or 'file',
+        'text': text,
+        'truncated': truncated,
+        'chars': len(text),
+    })

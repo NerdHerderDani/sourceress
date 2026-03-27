@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Tuple
 
-from .fubuki_service import fubuki_call
+from .fubuki_service import fubuki_call, fubuki_call_ex
 
 
 DM_SYSTEM_PROMPT = (
@@ -41,7 +41,10 @@ def fubuki_dm(data: dict[str, Any]) -> Tuple[str | None, str | None]:
 
     try:
         # Keep it short; DMs should be snappy.
-        text = fubuki_call(DM_SYSTEM_PROMPT, messages, max_tokens=120)
+        api_key = (data.get('_anthropic_api_key') or '').strip() or None
+        text, meta = fubuki_call_ex(DM_SYSTEM_PROMPT, messages, max_tokens=120, api_key=api_key)
+        # Stash meta so the route layer can log it (best-effort).
+        data['_usage_meta'] = meta
     except Exception as e:
         return None, str(e)
 

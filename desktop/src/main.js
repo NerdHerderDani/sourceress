@@ -60,8 +60,10 @@ async function ensureTokenExists() {
 async function start() {
   const hasToken = await ensureTokenExists();
   if (!hasToken) {
+    // Make it impossible to miss.
     els.panelSettings.style.display = "block";
-    setStatus("needs token", "Open Settings and paste your GitHub token.");
+    if (els.panelDiag) els.panelDiag.style.display = "none";
+    setStatus("needs GitHub token", "Click Settings → paste token → Save. Then click Start.");
     return;
   }
 
@@ -82,7 +84,20 @@ async function start() {
     }
     setStatus("running", url);
   } catch (e) {
-    setStatus("error", String(e));
+    // Make failures self-diagnosing.
+    setStatus("backend failed", "Open Diagnostics → Open log folder → attach backend.log");
+
+    try {
+      const d = await invoke('diagnostics');
+      $("diagText").textContent = JSON.stringify(d, null, 2);
+    } catch (_) {
+      // ignore
+    }
+
+    if (els.panelDiag) {
+      els.panelDiag.style.display = "block";
+      if (els.panelSettings) els.panelSettings.style.display = "none";
+    }
   }
 }
 
@@ -98,6 +113,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   els.statusText = $("statusText");
   els.statusHint = $("statusHint");
   els.panelSettings = $("panelSettings");
+  els.panelDiag = $("panelDiag");
   els.panelStatus = $("panelStatus");
   els.panelTabs = $("panelTabs");
   els.panelApp = $("panelApp");
@@ -110,8 +126,48 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Nav controls removed (keep topbar clean; navigation happens inside the app UI)
 
+  function hidePanels() {
+    if (els.panelSettings) els.panelSettings.style.display = "none";
+    if (els.panelDiag) els.panelDiag.style.display = "none";
+  }
+
   $("btnSettings").addEventListener("click", async () => {
-    els.panelSettings.style.display = els.panelSettings.style.display === "none" ? "block" : "none";
+    const on = els.panelSettings.style.display === "none";
+    hidePanels();
+    els.panelSettings.style.display = on ? "block" : "none";
+  });
+
+  $("btnDiag").addEventListener("click", async () => {
+    const on = els.panelDiag.style.display === "none";
+    hidePanels();
+    els.panelDiag.style.display = on ? "block" : "none";
+    if (on) {
+      try {
+        const d = await invoke('diagnostics');
+        const txt = JSON.stringify(d, null, 2);
+        $("diagText").textContent = txt;
+      } catch (e) {
+        $("diagText").textContent = String(e);
+      }
+    }
+  });
+
+  $("btnCopyDiag").addEventListener("click", async () => {
+    const txt = $("diagText").textContent || '';
+    try {
+      await navigator.clipboard.writeText(txt);
+      setStatus("copied", "diagnostics copied to clipboard");
+    } catch (e) {
+      setStatus("copy failed", String(e));
+    }
+  });
+
+  $("btnOpenLogs").addEventListener("click", async () => {
+    try {
+      await invoke('open_log_folder');
+    } catch (e) {
+      setStatus('error', String(e));
+    }
   });
 
   $("btnSaveToken").addEventListener("click", async () => {
@@ -135,6 +191,62 @@ window.addEventListener("DOMContentLoaded", async () => {
       setStatus("error", String(e));
     }
   });
+
+  // Optional Anthropic key to enable Fubuki (hidden unless enabled)
+  const enable = $("enableFubuki");
+  const wrap = $("fubukiKeyWrap");
+
+  async function refreshFubukiToggle() {
+    try {
+      const k = await invoke("anthropic_key_get");
+      if (k) {
+        if (enable) enable.checked = true;
+        if (wrap) wrap.style.display = "block";
+      }
+    } catch (_) {
+      // no key
+      if (enable) enable.checked = false;
+      if (wrap) wrap.style.display = "none";
+    }
+  }
+
+  enable?.addEventListener("change", async () => {
+    if (!enable.checked) {
+      try { await invoke("anthropic_key_clear"); } catch(_) {}
+      if (wrap) wrap.style.display = "none";
+      setStatus("fubuki disabled", "");
+    } else {
+      if (wrap) wrap.style.display = "block";
+      setStatus("fubuki enabled", "Paste your Anthropic key.");
+    }
+  });
+
+  $("btnSaveAnthropic")?.addEventListener("click", async () => {
+    const key = $("anthropicInput").value.trim();
+    if (!key) return;
+    try {
+      await invoke("anthropic_key_set", { key });
+      $("anthropicInput").value = "";
+      if (enable) enable.checked = true;
+      if (wrap) wrap.style.display = "block";
+      setStatus("anthropic key saved", "Fubuki is enabled.");
+    } catch (e) {
+      setStatus("error", String(e));
+    }
+  });
+
+  $("btnClearAnthropic")?.addEventListener("click", async () => {
+    try {
+      await invoke("anthropic_key_clear");
+      if (enable) enable.checked = false;
+      if (wrap) wrap.style.display = "none";
+      setStatus("anthropic key cleared", "Fubuki disabled.");
+    } catch (e) {
+      setStatus("error", String(e));
+    }
+  });
+
+  await refreshFubukiToggle();
 
   // basic refresh
   await refresh();

@@ -1,0 +1,24 @@
+# Fly.io config for Sourceress backend
+# NOTE: set app name with: fly apps create <name> and deploy with: fly deploy -a <name>
+
+primary_region = "sjc"
+
+[build]
+  dockerfile = "backend/Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[deploy]
+  # Run DB migrations on each deploy
+  release_command = "alembic -c alembic.ini upgrade head"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

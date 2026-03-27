@@ -4,7 +4,20 @@ from pathlib import Path
 
 
 def _key_path() -> Path:
-    # Local-only secret. Stored alongside DB for convenience.
+    """Path for the local agent key.
+
+    Installer-safe: store in %APPDATA%\Sourceress\data when available.
+    """
+    try:
+        import os
+
+        appdata = (os.environ.get('APPDATA') or '').strip()
+        if appdata:
+            return Path(appdata) / 'Sourceress' / 'data' / 'agent_key.txt'
+    except Exception:
+        pass
+
+    # Dev fallback.
     return Path('data') / 'agent_key.txt'
 
 

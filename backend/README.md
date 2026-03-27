@@ -70,6 +70,21 @@ Two options:
 - Visit `/settings` and store a GitHub token.
 - Run a search.
 
+## Weekend Mode (Anthropic Batch)
+
+Weekend Mode lives at:
+- `/weekend/jobs` (UI)
+
+To enable Anthropic Batch processing:
+1) Set `ANTHROPIC_API_KEY` in `.env` (or environment).
+2) Run migrations (`./scripts/migrate.ps1`) to add batch columns.
+3) Create a Weekend job, open it, and click **Submit batch**, then **Poll status**.
+
+Notes:
+- We submit one batch request per artifact (prefers extracted files if a ZIP was uploaded).
+- Prompt caching is enabled by including `cache_control: {type: 'ephemeral'}` on the system prompt inside the batch payload.
+- Results are stored as a `result` artifact (`anthropic_results.jsonl`) under `data/weekend_jobs/<job_id>/results/`.
+
 ## Notes
 - GitHub search is approximated: we translate boolean-ish query into GitHub tokens.
 - MVP uses REST for discovery + GraphQL for enrichment.

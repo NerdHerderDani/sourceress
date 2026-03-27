@@ -113,6 +113,41 @@
     <button type="submit">Add</button>
   </form>
 
+  <div class="card" style="margin:12px 0 0 0;">
+    <div style="display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap;">
+      <div>
+        <h2 style="margin:0">Share / Packs</h2>
+        <div class="hint">Export/import talent mapping as a single JSON pack (companies + comp bands, optional signals).</div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+        <a class="pill" href="/companies/export.json">Export (no signals)</a>
+        <a class="pill" href="/companies/export.json?include_signals=1">Export (+signals)</a>
+      </div>
+    </div>
+
+    <form method="post" action="/companies/import" enctype="multipart/form-data" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-top: 10px;">
+      <div style="flex:1; min-width: 280px;">
+        <div class="hint">Import pack (.json)</div>
+        <input type="file" name="file" accept="application/json" />
+      </div>
+      <div>
+        <div class="hint">Mode</div>
+        <select name="mode">
+          <option value="merge" selected>Merge (safe)</option>
+          <option value="replace">Replace (wipe + import)</option>
+        </select>
+      </div>
+      <div>
+        <div class="hint">Signals</div>
+        <select name="include_signals">
+          <option value="0" selected>Ignore</option>
+          <option value="1">Import</option>
+        </select>
+      </div>
+      <button type="submit">Import</button>
+    </form>
+  </div>
+
   {% if msg %}
     <div class="hint" style="margin-top:10px;">{{ msg }}</div>
   {% endif %}

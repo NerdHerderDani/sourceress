@@ -19,6 +19,7 @@
           <button id="btnStart" type="button">Start</button>
           <button id="btnStop" type="button">Stop</button>
           <button id="btnSettings" type="button">Settings</button>
+          <button id="btnDiag" type="button">Diagnostics</button>
         </div>
       </header>
 
@@ -35,6 +36,34 @@
           <button id="btnSaveToken" type="button">Save</button>
           <button id="btnClearToken" type="button">Clear</button>
         </div>
+
+        <hr style="border:0;border-top:1px solid rgba(255,255,255,0.08); margin:14px 0;" />
+
+        <div class="row" style="align-items:center; gap:10px;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;">
+            <input id="enableFubuki" type="checkbox" />
+            <span class="hint" style="margin:0;">Enable Fubuki (optional)</span>
+          </label>
+        </div>
+
+        <div id="fubukiKeyWrap" style="display:none; margin-top:10px;">
+          <p class="hint">Paste your Anthropic API key (sk-ant-...) to enable Fubuki. Stored securely (Credential Manager / Keychain).</p>
+          <div class="row">
+            <input id="anthropicInput" type="password" placeholder="sk-ant-…" />
+            <button id="btnSaveAnthropic" type="button">Save</button>
+            <button id="btnClearAnthropic" type="button">Clear</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="panelDiag" class="panel" style="display:none;">
+        <h2>Diagnostics</h2>
+        <div class="hint">Use this when something breaks. Paste it into a bug report.</div>
+        <div class="row" style="margin-top:10px;">
+          <button id="btnCopyDiag" type="button">Copy diagnostics</button>
+          <button id="btnOpenLogs" type="button">Open log folder</button>
+        </div>
+        <pre id="diagText" style="margin-top:10px; white-space:pre-wrap; word-break:break-word;"></pre>
       </section>
 
       <section class="panel" id="panelTabs" style="display:none; padding: 10px;">

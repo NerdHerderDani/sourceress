@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="topbar">
+  <div>
+    <h1 style="margin:0">Prices</h1>
+    <div class="hint">Top 25 coins by market cap (USD). Auto-refreshes. AVAX highlighted.</div>
+  </div>
+  <div class="hint" id="lastUpdated">Loading…</div>
+</div>
+
+<div class="panel">
+  <div class="info" style="margin-bottom: 10px;">
+    Data: CoinGecko public API (cached ~30s). This is informational only.
+  </div>
+
+  <div style="display:grid; grid-template-columns: 1fr 360px; gap: 12px; align-items:start;">
+    <div style="overflow:auto;">
+      <table style="width:100%; border-collapse: collapse; font-family: var(--font-ui);">
+      <thead>
+        <tr style="text-transform: uppercase; letter-spacing: 0.35px; color: var(--muted); font-size: 12px;">
+          <th style="text-align:left; padding: 8px; border-bottom:1px solid var(--border);">Coin</th>
+          <th style="text-align:right; padding: 8px; border-bottom:1px solid var(--border);">Price</th>
+          <th style="text-align:right; padding: 8px; border-bottom:1px solid var(--border);">24h</th>
+          <th style="text-align:right; padding: 8px; border-bottom:1px solid var(--border);">Mkt Cap</th>
+          <th style="text-align:right; padding: 8px; border-bottom:1px solid var(--border);">Vol (24h)</th>
+          <th style="text-align:right; padding: 8px; border-bottom:1px solid var(--border);">7d</th>
+        </tr>
+      </thead>
+        <tbody id="rows">
+          <tr><td colspan="6" class="hint" style="padding: 10px;">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel" style="position:sticky; top: 12px;">
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:baseline;">
+        <h2 style="margin:0">Chart</h2>
+        <select id="range" style="max-width: 120px;">
+          <option value="1">24h</option>
+          <option value="7" selected>7d</option>
+          <option value="30">30d</option>
+          <option value="90">90d</option>
+          <option value="365">1y</option>
+        </select>
+      </div>
+      <div class="hint" id="chartTitle" style="margin-top:6px;">Click a coin row.</div>
+      <canvas id="bigChart" width="340" height="200" style="margin-top:10px;"></canvas>
+
+      <div style="margin-top: 14px; border-top:1px solid var(--border); padding-top: 12px;">
+        <h2 style="margin:0">Derivatives</h2>
+        <div class="hint">Binance Futures telemetry (no API key). Cached ~15s.</div>
+        <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+          <select id="derivSym" style="flex:1;">
+            <option>BTC</option>
+            <option>ETH</option>
+            <option>AVAX</option>
+          </select>
+          <button id="derivLoad" type="button">Refresh</button>
+        </div>
+        <div class="card" style="margin:10px 0 0 0;">
+          <div class="hint">Funding (last)</div>
+          <div style="display:flex; justify-content:space-between; gap:10px;">
+            <div style="font-weight:900;" id="fundingRate">—</div>
+            <div class="hint" id="nextFunding">—</div>
+          </div>
+        </div>
+        <div class="card" style="margin:10px 0 0 0;">
+          <div class="hint">Open Interest</div>
+          <div style="display:flex; justify-content:space-between; gap:10px;">
+            <div style="font-weight:900;" id="openInterest">—</div>
+            <div class="hint" id="oiTime">—</div>
+          </div>
+        </div>
+        <div class="hint" id="derivStatus" style="margin-top:8px;">Ready.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  function fmtUsd(x) {
+    if (x === null || x === undefined) return '';
+    const n = Number(x);
+    if (!isFinite(n)) return '';
+    if (n >= 1e12) return '$' + (n/1e12).toFixed(2) + 'T';
+    if (n >= 1e9) return '$' + (n/1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return '$' + (n/1e6).toFixed(2) + 'M';
+    if (n >= 1e3) return '$' + (n/1e3).toFixed(2) + 'K';
+    if (n >= 1) return '$' + n.toFixed(2);
+    return '$' + n.toPrecision(3);
+  }
+
+  function pct(x) {
+    const n = Number(x);
+    if (!isFinite(n)) return '';
+    const s = (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+    return s;
+  }
+
+  function colorForPct(n) {
+    n = Number(n);
+    if (!isFinite(n)) return 'var(--muted)';
+    if (n > 0.5) return 'var(--green)';
+    if (n < -0.5) return 'var(--danger)';
+    return 'var(--muted)';
+  }
+
+  const charts = new Map();
+  let big = null;
+  let selected = null;
+
+  function renderSpark(canvas, points) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const key = canvas.dataset.key;
+
+    const data = (Array.isArray(points) ? points : []).filter(x => typeof x === 'number' && isFinite(x));
+    const cfg = {
+      type: 'line',
+      data: {
+        labels: data.map((_, i) => i),
+        datasets: [{
+          data,
+          borderColor: 'rgba(255,59,59,0.95)',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.25,
+        }]
+      },
+      options: {
+        responsive: false,
+        animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: { x: { display: false }, y: { display: false } },
+      }
+    };
+
+    if (charts.has(key)) {
+      const c = charts.get(key);
+      c.data.datasets[0].data = data;
+      c.update();
+      return;
+    }
+    charts.set(key, new Chart(ctx, cfg));
+  }
+
+  function ensureBig() {
+    const el = document.getElementById('bigChart');
+    if (!el) return null;
+    if (big) return big;
+    big = new Chart(el.getContext('2d'), {
+      type: 'line',
+      data: { labels: [], datasets: [{ data: [], borderColor: 'rgba(255,59,59,0.95)', borderWidth: 2, pointRadius: 0, tension: 0.25 }] },
+      options: {
+        animation: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { display: false }, y: { display: true, ticks: { color: '#8b949e' } } },
+      }
+    });
+    return big;
+  }
+
+  async function loadChart(coinId) {
+    selected = coinId;
+    const days = Number(document.getElementById('range')?.value || 7);
+    const r = await fetch(`/prices/${coinId}.json?days=${days}`, { cache: 'no-store' });
+    const d = await r.json();
+    const title = document.getElementById('chartTitle');
+    if (!d.ok) {
+      title.textContent = `Error: ${d.error || 'unknown'}`;
+      return;
+    }
+    title.textContent = `${coinId} — ${days}d`;
+    const series = d.series || [];
+    const xs = series.map(pt => new Date(pt.t).toLocaleString());
+    const ys = series.map(pt => pt.p);
+    const c = ensureBig();
+    if (!c) return;
+    c.data.labels = xs;
+    c.data.datasets[0].data = ys;
+    c.update();
+  }
+
+  async function refresh() {
+    const r = await fetch('/prices.json', { cache: 'no-store' });
+    const d = await r.json();
+    if (!d.ok) {
+      document.getElementById('rows').innerHTML = `<tr><td colspan="6" class="hint" style="padding:10px;">Error: ${d.error || 'unknown'}</td></tr>`;
+      return;
+    }
+
+    const rows = d.items || [];
+    const tb = document.getElementById('rows');
+    tb.innerHTML = '';
+
+    document.getElementById('lastUpdated').textContent = d.fetched_at ? ('Updated ' + d.fetched_at) : 'Updated';
+
+    for (const it of rows) {
+      const sym = (it.symbol || '').toUpperCase();
+      const isAvax = sym === 'AVAX';
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid var(--border)';
+      tr.style.cursor = 'pointer';
+      tr.addEventListener('click', () => loadChart(it.id));
+      if (isAvax) {
+        tr.style.background = 'color-mix(in srgb, var(--accent) 10%, transparent)';
+      }
+
+      const p24 = it.price_change_percentage_24h;
+      const p7 = it.price_change_percentage_7d_in_currency;
+
+      tr.innerHTML = `
+        <td style="padding: 8px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <img src="${it.image || ''}" style="width:18px;height:18px;border-radius:999px;" />
+            <div>
+              <div style="font-weight:800;">${it.name || ''} <span class="hint">(${sym})</span></div>
+              <div class="hint" style="font-size:12px;">#${it.market_cap_rank || ''}</div>
+            </div>
+          </div>
+        </td>
+        <td style="padding: 8px; text-align:right; font-weight:800;">${fmtUsd(it.current_price)}</td>
+        <td style="padding: 8px; text-align:right; color:${colorForPct(p24)}; font-weight:800;">${pct(p24)}</td>
+        <td style="padding: 8px; text-align:right;">${fmtUsd(it.market_cap)}</td>
+        <td style="padding: 8px; text-align:right;">${fmtUsd(it.total_volume)}</td>
+        <td style="padding: 8px; text-align:right;">
+          <canvas width="120" height="26" data-key="${it.id}"></canvas>
+        </td>
+      `;
+      tb.appendChild(tr);
+
+      const canvas = tr.querySelector('canvas');
+      if (canvas) {
+        canvas.dataset.key = it.id;
+        renderSpark(canvas, (it.sparkline_in_7d || {}).price);
+      }
+    }
+  }
+
+  document.getElementById('range')?.addEventListener('change', () => { if (selected) loadChart(selected); });
+
+  function fmtNum(x) {
+    const n = Number(x);
+    if (!isFinite(n)) return '';
+    if (n >= 1e12) return (n/1e12).toFixed(2) + 'T';
+    if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+    if (n >= 1e3) return (n/1e3).toFixed(2) + 'K';
+    return n.toFixed(2);
+  }
+
+  function fmtTs(ms) {
+    const n = Number(ms);
+    if (!isFinite(n) || n <= 0) return '';
+    try { return new Date(n).toLocaleString(); } catch (_) { return ''; }
+  }
+
+  async function loadDerivs() {
+    const sym = (document.getElementById('derivSym')?.value || 'BTC').trim();
+    const st = document.getElementById('derivStatus');
+    st.textContent = 'Loading…';
+
+    try {
+      const r1 = await fetch(`/derivs/funding.json?symbol=${encodeURIComponent(sym)}`, { cache: 'no-store' });
+      const d1 = await r1.json();
+      if (!d1.ok) throw new Error(d1.error || 'funding error');
+
+      const r2 = await fetch(`/derivs/oi.json?symbol=${encodeURIComponent(sym)}`, { cache: 'no-store' });
+      const d2 = await r2.json();
+      if (!d2.ok) throw new Error(d2.error || 'oi error');
+
+      const fr = Number(d1.lastFundingRate) * 100;
+      const frEl = document.getElementById('fundingRate');
+      frEl.textContent = isFinite(fr) ? ((fr >= 0 ? '+' : '') + fr.toFixed(4) + '%') : '—';
+      frEl.style.color = (fr > 0.0001) ? 'var(--danger)' : (fr < -0.0001) ? 'var(--green)' : 'var(--muted)';
+
+      document.getElementById('nextFunding').textContent = d1.nextFundingTime ? ('next: ' + fmtTs(d1.nextFundingTime)) : '—';
+
+      document.getElementById('openInterest').textContent = d2.openInterest ? fmtNum(d2.openInterest) : '—';
+      document.getElementById('oiTime').textContent = d2.time ? fmtTs(d2.time) : '';
+
+      st.textContent = `Loaded ${sym}USDT`;
+    } catch (e) {
+      st.textContent = 'Error: ' + (e?.message || 'unknown');
+    }
+  }
+
+  document.getElementById('derivLoad')?.addEventListener('click', loadDerivs);
+  document.getElementById('derivSym')?.addEventListener('change', loadDerivs);
+  loadDerivs();
+
+  refresh();
+  setInterval(refresh, 30000);
+</script>
+
+{% endblock %}

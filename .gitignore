@@ -8,18 +8,22 @@
 **/.env
 
 # Backend data/build
-backend/data/*.db
-backend/data/*.sqlite
-backend/data/uvicorn.log
-backend/data/last_port.txt
-backend/build/
+backend/data/
+backend/dist-backend/
 backend/dist/
+backend/build/
 backend/*.spec
+backend/.pytest_cache/
 
 # Node/Tauri
 desktop/node_modules/
 desktop/src-tauri/target/
 desktop/src-tauri/bin/
+desktop/data/
+
+# Rust (connector)
+connector/target/
+connector/Cargo.lock
 
 # OS
 .DS_Store

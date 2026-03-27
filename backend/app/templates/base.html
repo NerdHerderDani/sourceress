@@ -327,6 +327,41 @@
     .meta { color: var(--muted); font-size: 13px; }
     .score { font-weight: 700; }
     ul { margin: 6px 0 0 18px; }
+
+    /* Legacy compatibility (old templates) */
+    label { display:block; margin: 10px 0 6px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.35px; }
+    code, pre { font-family: var(--font-ui); }
+    code { background: color-mix(in srgb, var(--panel2) 80%, transparent); border: 1px solid var(--border); padding: 2px 6px; }
+    pre { background: var(--panel2); border: 1px solid var(--border); padding: 10px 12px; overflow:auto; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+      background: linear-gradient(180deg,
+        color-mix(in srgb, var(--accent) 18%, var(--panel)),
+        color-mix(in srgb, var(--accent) 10%, var(--panel2))
+      );
+      color: var(--text);
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 120ms ease, box-shadow 160ms ease, border-color 120ms ease;
+    }
+    .btn:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: 0 0 0 3px rgba(255,59,59,0.10); text-decoration:none; }
+    .btn.secondary { border-color: var(--border); background: color-mix(in srgb, var(--panel) 65%, transparent); }
+    .btn.danger { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); background: color-mix(in srgb, var(--danger) 12%, var(--panel2)); }
+
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--border); padding: 10px 10px; vertical-align: top; }
+    th { text-transform: uppercase; letter-spacing: 0.35px; font-size: 12px; color: var(--muted); text-align:left; }
+    tr:hover td { background: color-mix(in srgb, var(--panel) 55%, transparent); }
+
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
   </style>
   {% block head %}{% endblock %}
 </head>
@@ -351,14 +386,120 @@
         <a class="pill" href="/stack">Stack</a>
         <a class="pill" href="/projects-ui">Projects</a>
         <a class="pill" href="/companies">Talent Mapping</a>
+        <a class="pill" href="/prices">Prices</a>
+        <a class="pill" href="/usage" title="Tokens + estimated $">Usage</a>
+        <a class="pill" href="/agent/fubuki">Fubuki</a>
+        <a class="pill" href="/job-board">Job Board</a>
+        <a class="pill" href="/weekend/jobs" title="Weekend Mode (Batch jobs)">Weekend</a>
         <a class="pill" href="/linkedin">LinkedIn</a>
         <a class="pill" href="/settings">Settings</a>
+        <a class="pill" href="/health/full" title="Demo readiness checks">Health</a>
         <a class="pill" href="/auth/logout">Logout</a>
       </div>
     </div>
 
     {% block body %}{% endblock %}
   </div>
+  <!-- ── Fubuki DM Bubble (available on every page) ── -->
+  <style>
+    #fubuki-dm-btn {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      width: 52px;
+      height: 52px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+      background: linear-gradient(180deg,
+        color-mix(in srgb, var(--accent) 18%, var(--panel)),
+        color-mix(in srgb, var(--accent) 10%, var(--panel2))
+      );
+      color: var(--text);
+      cursor: pointer;
+      box-shadow: 0 18px 34px rgba(0,0,0,0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    #fubuki-dm-btn:hover { transform: translateY(-1px); }
+
+    #fubuki-dm-panel {
+      position: fixed;
+      right: 18px;
+      bottom: 80px;
+      width: 340px;
+      max-width: calc(100vw - 36px);
+      height: 420px;
+      max-height: calc(100vh - 140px);
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg,
+        color-mix(in srgb, var(--panel) 92%, transparent),
+        color-mix(in srgb, var(--panel2) 92%, transparent)
+      );
+      box-shadow: 0 18px 40px rgba(0,0,0,0.55);
+      display: none;
+      flex-direction: column;
+      z-index: 9999;
+    }
+    #fubuki-dm-panel.on { display: flex; }
+
+    #fubuki-dm-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: var(--muted);
+    }
+    #fubuki-dm-title { color: var(--text); font-weight: 800; }
+    #fubuki-dm-close { background: transparent; border: 1px solid var(--border); padding: 4px 8px; }
+
+    #fubuki-dm-msgs {
+      flex: 1;
+      overflow: auto;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .fubuki-msg { max-width: 85%; padding: 8px 10px; border: 1px solid var(--border); background: var(--panel2); font-size: 13px; white-space: pre-wrap; }
+    .fubuki-msg.user { align-self: flex-end; border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+    .fubuki-msg.ai { align-self: flex-start; }
+    .fubuki-msg.think { opacity: 0.7; font-style: italic; }
+
+    #fubuki-dm-inputrow {
+      border-top: 1px solid var(--border);
+      padding: 10px 12px;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    #fubuki-dm-input { flex: 1; min-height: 38px; max-height: 140px; resize: none; }
+    #fubuki-dm-send { padding: 10px 12px; }
+  </style>
+
+  <button id="fubuki-dm-btn" title="Fubuki DMs">DM</button>
+
+  <div id="fubuki-dm-panel" aria-hidden="true">
+    <div id="fubuki-dm-header">
+      <div id="fubuki-dm-title">Fubuki — DMs</div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <button id="fubuki-dm-key" title="Set Anthropic API key" class="btnToggle">API KEY</button>
+        <button id="fubuki-dm-close" title="Close">×</button>
+      </div>
+    </div>
+    <div id="fubuki-dm-msgs"></div>
+    <div id="fubuki-dm-inputrow">
+      <textarea id="fubuki-dm-input" placeholder="message..." rows="1"></textarea>
+      <button id="fubuki-dm-send">↑</button>
+    </div>
+  </div>
+
   <script>
     // Allow the desktop wrapper (cross-origin) to ask pages for their current URL.
     window.addEventListener('message', (e) => {
@@ -368,6 +509,102 @@
         }
       } catch (_) {}
     });
+
+    (function() {
+      const btn = document.getElementById('fubuki-dm-btn');
+      const panel = document.getElementById('fubuki-dm-panel');
+      const closeBtn = document.getElementById('fubuki-dm-close');
+      const keyBtn = document.getElementById('fubuki-dm-key');
+      const msgs = document.getElementById('fubuki-dm-msgs');
+      const input = document.getElementById('fubuki-dm-input');
+      const send = document.getElementById('fubuki-dm-send');
+
+      let history = [];
+      let loading = false;
+
+      function toggle(on) {
+        panel.classList.toggle('on', on);
+        panel.setAttribute('aria-hidden', on ? 'false' : 'true');
+        if (on) setTimeout(() => input.focus(), 0);
+      }
+
+      function addMsg(role, text, cls) {
+        const d = document.createElement('div');
+        d.className = `fubuki-msg ${role} ${cls || ''}`.trim();
+        d.textContent = text;
+        msgs.appendChild(d);
+        msgs.scrollTop = msgs.scrollHeight;
+        return d;
+      }
+
+      async function sendDM() {
+        const text = (input.value || '').trim();
+        if (!text || loading) return;
+
+        loading = true;
+        send.disabled = true;
+        input.value = '';
+
+        history.push({ role: 'user', content: text });
+        addMsg('user', text);
+        const t = addMsg('ai', '...', 'think');
+
+        try {
+          const apiKey = (localStorage.getItem('anthropic_api_key') || '').trim();
+          const r = await fetch('/agent/fubuki/dm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(apiKey ? { 'x-anthropic-key': apiKey } : {}) },
+            body: JSON.stringify({
+              message: text,
+              history: history.map(m => ({ role: m.role, content: m.content }))
+            })
+          });
+          const data = await r.json();
+          const reply = (data && data.ok === false)
+            ? (`Error: ${data.error || 'unknown error'}`)
+            : (data && data.response) || 'No response.';
+
+          history.push({ role: 'assistant', content: reply });
+          t.remove();
+          addMsg('ai', reply);
+        } catch (e) {
+          t.remove();
+          addMsg('ai', 'Tch. Network error.');
+        }
+
+        loading = false;
+        send.disabled = false;
+        input.focus();
+      }
+
+      btn.addEventListener('click', () => toggle(!panel.classList.contains('on')));
+      closeBtn.addEventListener('click', () => toggle(false));
+
+      keyBtn?.addEventListener('click', () => {
+        const cur = (localStorage.getItem('anthropic_api_key') || '').trim();
+        const k = prompt('Paste your Anthropic API key (sk-ant-...)', cur || '');
+        if (k === null) return;
+        const v = (k || '').trim();
+        if (!v) {
+          localStorage.removeItem('anthropic_api_key');
+          alert('API key cleared.');
+          return;
+        }
+        localStorage.setItem('anthropic_api_key', v);
+        alert('API key saved (local only). Refresh if needed.');
+      });
+
+      send.addEventListener('click', sendDM);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendDM();
+        }
+      });
+
+      // Tiny boot message
+      addMsg('ai', "hey. what's up?");
+    })();
   </script>
 </body>
 </html>

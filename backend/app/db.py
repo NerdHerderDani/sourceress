@@ -43,9 +43,30 @@ _ensure_sqlite_dir(settings.db_url)
 engine = create_engine(settings.db_url, echo=False)
 
 def init_db() -> None:
-    # Schema is managed by Alembic migrations.
-    # We keep this as a no-op to avoid tables getting created outside migrations.
-    return
+    """Initialize DB for local/demo builds.
+
+    In dev, Alembic manages schema. In packaged desktop demos we don't want users
+    to run migrations manually, so if we're on SQLite and the DB is empty, we
+    create tables.
+    """
+    try:
+        u = (settings.db_url or '').strip()
+        if not u.startswith('sqlite:'):
+            return
+
+        # Best-effort: if any core table exists, assume schema is present.
+        from sqlalchemy import inspect
+
+        insp = inspect(engine)
+        existing = set(insp.get_table_names() or [])
+        if existing:
+            return
+
+        # Create all tables defined by SQLModel metadata.
+        SQLModel.metadata.create_all(engine)
+    except Exception:
+        # Don't block app startup.
+        return
 
 def get_session() -> Session:
     return Session(engine)

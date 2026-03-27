@@ -11,6 +11,8 @@ from fastapi import Request
 
 from .config import settings
 
+import httpx
+
 
 def _b64url_decode(s: str) -> bytes:
     s += '=' * (-len(s) % 4)
@@ -21,6 +23,8 @@ def verify_supabase_jwt(token: str) -> Optional[dict[str, Any]]:
     """Verify HS256 JWT issued by Supabase using SUPABASE_JWT_SECRET.
 
     Returns claims if valid, else None.
+
+    Note: if SUPABASE_JWT_SECRET is not set, use verify_supabase_token_remote.
     """
     secret = settings.supabase_jwt_secret
     if not secret:
@@ -50,6 +54,43 @@ def verify_supabase_jwt(token: str) -> Optional[dict[str, Any]]:
         return claims
     except Exception:
         return None
+
+
+async def verify_supabase_token_remote(token: str) -> Optional[dict[str, Any]]:
+    """Verify a Supabase access token by calling the Supabase Auth API.
+
+    This works even if SUPABASE_JWT_SECRET is not available.
+
+    Returns a small claims-like dict with at least: email, sub, exp (if present).
+    """
+    url = (settings.supabase_url or '').strip().rstrip('/')
+    key = (settings.supabase_anon_key or '').strip()
+    if not url or not key or not token:
+        return None
+
+    headers = {
+        'apikey': key,
+        'Authorization': f'Bearer {token}',
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(f"{url}/auth/v1/user", headers=headers)
+            if r.status_code >= 400:
+                return None
+            data = r.json() if r.content else {}
+    except Exception:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    # Normalize to a claims-like shape
+    out: dict[str, Any] = {}
+    out['email'] = (data.get('email') or '').strip()
+    out['sub'] = data.get('id') or ''
+    # Some responses include app_metadata/user_metadata, but we don't rely on them.
+    return out if out.get('email') else None
 
 
 def get_bearer_token(req: Request) -> Optional[str]:
