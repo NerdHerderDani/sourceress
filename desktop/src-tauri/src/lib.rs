@@ -148,9 +148,34 @@ fn parse_local_url_to_addr(url: &str) -> Option<std::net::SocketAddr> {
 
 fn recover_backend_url(app: &tauri::AppHandle) -> Option<String> {
     let data_dir = app.path().app_data_dir().ok()?;
+
+    // Preferred: persisted url file.
     let p = data_dir.join("backend-url.txt");
-    let url = std::fs::read_to_string(&p).ok()?.trim().to_string();
-    if url.is_empty() { None } else { Some(url) }
+    if let Ok(s) = std::fs::read_to_string(&p) {
+        let url = s.trim().to_string();
+        if !url.is_empty() {
+            return Some(url);
+        }
+    }
+
+    // Fallback: parse the last "Uvicorn running on http://127.0.0.1:PORT" line from backend.log.
+    // This covers cases where the backend is alive but the url file wasn't written (or was deleted).
+    let log_path = data_dir.join("backend.log");
+    if let Ok(s) = std::fs::read_to_string(&log_path) {
+        let needle = "Uvicorn running on http://127.0.0.1:";
+        for line in s.lines().rev() {
+            if let Some(idx) = line.find(needle) {
+                let rest = &line[idx + "Uvicorn running on ".len()..];
+                // rest begins with http://127.0.0.1:PORT ...
+                let url = rest.split_whitespace().next().unwrap_or("").trim();
+                if url.starts_with("http://127.0.0.1:") {
+                    return Some(url.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn probe_backend(url: &str) -> bool {
