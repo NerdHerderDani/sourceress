@@ -140,26 +140,76 @@ struct Diagnostics {
     anthropic_key_set: bool,
 }
 
+fn parse_local_url_to_addr(url: &str) -> Option<std::net::SocketAddr> {
+    // Expected: http://127.0.0.1:PORT
+    let hostport = url.trim().strip_prefix("http://")?;
+    hostport.parse().ok()
+}
+
+fn recover_backend_url(app: &tauri::AppHandle) -> Option<String> {
+    let data_dir = app.path().app_data_dir().ok()?;
+    let p = data_dir.join("backend-url.txt");
+    let url = std::fs::read_to_string(&p).ok()?.trim().to_string();
+    if url.is_empty() { None } else { Some(url) }
+}
+
+fn probe_backend(url: &str) -> bool {
+    if let Some(addr) = parse_local_url_to_addr(url) {
+        return std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(150)).is_ok();
+    }
+    false
+}
+
 #[tauri::command]
 fn diagnostics(app: tauri::AppHandle, state: tauri::State<'_, Mutex<BackendState>>) -> Result<Diagnostics, String> {
-    let st = state.lock().map_err(|_| "lock poisoned".to_string())?;
-
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("app data dir: {e}"))?;
     let backend_log = data_dir.join("backend.log");
 
-    let github_token_set = keyring_entry(USERNAME).get_password().ok().map(|s| !s.trim().is_empty()).unwrap_or(false);
-    let anthropic_key_set = keyring_entry(ANTHROPIC_USERNAME).get_password().ok().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    // Read state first, but recover last url after restarts.
+    let (mut backend_running, mut backend_url) = {
+        let st = state.lock().map_err(|_| "lock poisoned".to_string())?;
+        (st.child.is_some(), st.url.clone())
+    };
+
+    if backend_url.is_none() {
+        backend_url = recover_backend_url(&app);
+    }
+
+    if let Some(url) = backend_url.as_deref() {
+        // If UI restarted, we won't have a child handle but backend may still be alive.
+        if probe_backend(url) {
+            backend_running = true;
+            // Store back into state so UI can use it.
+            let mut st = state.lock().map_err(|_| "lock poisoned".to_string())?;
+            st.url = Some(url.to_string());
+        } else {
+            // stale url
+            backend_running = false;
+            backend_url = None;
+        }
+    }
+
+    let github_token_set = keyring_entry(USERNAME)
+        .get_password()
+        .ok()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    let anthropic_key_set = keyring_entry(ANTHROPIC_USERNAME)
+        .get_password()
+        .ok()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
 
     Ok(Diagnostics {
         app_version: app.package_info().version.to_string(),
         tauri_version: tauri::VERSION.to_string(),
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
-        backend_running: st.child.is_some(),
-        backend_url: st.url.clone(),
+        backend_running,
+        backend_url,
         data_dir: data_dir.to_string_lossy().to_string(),
         backend_log: backend_log.to_string_lossy().to_string(),
         github_token_set,
